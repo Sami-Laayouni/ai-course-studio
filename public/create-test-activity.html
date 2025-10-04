@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Create Test Activity</title>
+  </head>
+  <body>
+    <h1>Create Test Activity</h1>
+    <div id="output"></div>
+    <button onclick="createTestActivity()">
+      Create Test Activity with ID: activity_1759071722763
+    </button>
+    <button onclick="testActivity()">Test Activity Access</button>
+    <button onclick="showAllActivities()">Show All Activities</button>
+
+    <script>
+      function createTestActivity() {
+        const testActivity = {
+          id: "activity_1759071722763",
+          type: "enhanced_workflow",
+          title: "Test Activity - Math Quiz",
+          description:
+            "This is a test activity to verify the student view works",
+          content: {
+            nodes: [
+              {
+                id: "node1",
+                type: "quiz",
+                title: "Math Question",
+                description: "What is 2 + 2?",
+                config: {
+                  question: "What is 2 + 2?",
+                  options: ["3", "4", "5", "6"],
+                  correct_answer: "4",
+                },
+              },
+            ],
+            connections: [],
+          },
+          points: 50,
+          estimated_duration: 5,
+          difficulty_level: 1,
+          is_adaptive: true,
+          is_collaborative: false,
+          is_enhanced: true,
+          created_at: new Date().toISOString(),
+        };
+
+        // Save with the exact key that the student view will look for
+        localStorage.setItem(
+          "activity_1759071722763",
+          JSON.stringify(testActivity)
+        );
+
+        document.getElementById("output").innerHTML = `
+                <h3>✅ Test Activity Created!</h3>
+                <p><strong>ID:</strong> activity_1759071722763</p>
+                <p><strong>Title:</strong> ${testActivity.title}</p>
+                <p><strong>Type:</strong> ${testActivity.type}</p>
+                <p><strong>Key in localStorage:</strong> activity_1759071722763</p>
+                <p><strong>Test URL:</strong> <a href="/learn/activities/activity_1759071722763" target="_blank">http://localhost:3000/learn/activities/activity_1759071722763</a></p>
+            `;
+      }
+
+      function testActivity() {
+        const activityId = "activity_1759071722763";
+        const savedActivity = localStorage.getItem(activityId);
+
+        if (savedActivity) {
+          const activityData = JSON.parse(savedActivity);
+          document.getElementById("output").innerHTML = `
+                    <h3>✅ Activity Found!</h3>
+                    <pre>${JSON.stringify(activityData, null, 2)}</pre>
+                `;
+        } else {
+          document.getElementById("output").innerHTML = `
+                    <h3>❌ Activity Not Found</h3>
+                    <p>No activity found with key: ${activityId}</p>
+                `;
+        }
+      }
+
+      function showAllActivities() {
+        const keys = Object.keys(localStorage).filter((key) =>
+          key.startsWith("activity_")
+        );
+        document.getElementById("output").innerHTML = `
+                <h3>All Activity Keys in localStorage:</h3>
+                <ul>${keys.map((key) => `<li>${key}</li>`).join("")}</ul>
+            `;
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Activities</title>
+</head>
+<body>
+    <h1>Activity Debug Tool</h1>
+    <div id="output"></div>
+    <button onclick="checkActivity()">Check Activity</button>
+    <button onclick="showAllActivities()">Show All Activities</button>
+    <button onclick="createTestActivity()">Create Test Activity</button>
+    
+    <script>
+        function showAllActivities() {
+            const output = document.getElementById('output');
+            const keys = Object.keys(localStorage).filter(key => key.startsWith('activity_'));
+            output.innerHTML = '<h3>All activity keys in localStorage:</h3><ul>' + 
+                keys.map(key => `<li>${key}</li>`).join('') + '</ul>';
+        }
+        
+        function checkActivity() {
+            const activityId = prompt('Enter activity ID to check:');
+            if (!activityId) return;
+            
+            const output = document.getElementById('output');
+            
+            // Check both formats
+            const oldFormatKey = activityId; // if it already has activity_ prefix
+            const newFormatKey = `activity_${activityId}`; // if it's just the ID
+            
+            const oldFormatData = localStorage.getItem(oldFormatKey);
+            const newFormatData = localStorage.getItem(newFormatKey);
+            
+            let result = `<h3>Checking activity: ${activityId}</h3>`;
+            result += `<p>Old format key (${oldFormatKey}): ${oldFormatData ? 'FOUND' : 'NOT FOUND'}</p>`;
+            result += `<p>New format key (${newFormatKey}): ${newFormatData ? 'FOUND' : 'NOT FOUND'}</p>`;
+            
+            if (oldFormatData) {
+                result += `<h4>Old format data:</h4><pre>${JSON.stringify(JSON.parse(oldFormatData), null, 2)}</pre>`;
+            }
+            if (newFormatData) {
+                result += `<h4>New format data:</h4><pre>${JSON.stringify(JSON.parse(newFormatData), null, 2)}</pre>`;
+            }
+            
+            output.innerHTML = result;
+        }
+        
+        function createTestActivity() {
+            const testActivity = {
+                id: 'test-activity-123',
+                type: 'test',
+                title: 'Test Activity',
+                description: 'This is a test activity',
+                content: { test: true }
+            };
+            
+            localStorage.setItem('activity_test-activity-123', JSON.stringify(testActivity));
+            alert('Test activity created! Try accessing: /learn/activities/test-activity-123');
+        }
+        
+        // Show all activities on load
+        showAllActivities();
+    </script>
+</body>
+</html>
