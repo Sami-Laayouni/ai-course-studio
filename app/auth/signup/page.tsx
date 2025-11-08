@@ -61,57 +61,100 @@ export default function SignupPage() {
 
       // If user was created successfully, create/update the profile
       if (authData.user) {
-        // Try to create profile directly first
-        const { error: profileError } = await supabase.from("profiles").upsert({
-          id: authData.user.id,
-          email: email,
-          full_name: fullName,
-          role: role,
-          school_name: schoolName,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        });
+        // Wait a moment for the database trigger to potentially create the profile
+        await new Promise((resolve) => setTimeout(resolve, 500));
 
-        if (profileError) {
-          console.error("Profile creation error:", profileError);
+        // Check if profile already exists (might have been created by trigger)
+        const { data: existingProfile } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("id", authData.user.id)
+          .single();
 
-          // Show user-friendly error message
-          setError(
-            "Account created but profile setup failed. This usually means the database isn't set up properly. " +
-              "Please contact an administrator or check the database setup guide."
-          );
-
-          // Fallback: Use API endpoint to create profile
-          try {
-            const response = await fetch("/api/auth/create-profile", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                full_name: fullName,
-                role: role,
-                school_name: schoolName,
-              }),
+        // Only try to create/update if profile doesn't exist or needs updating
+        if (!existingProfile) {
+          const { error: profileError } = await supabase
+            .from("profiles")
+            .upsert({
+              id: authData.user.id,
+              email: email,
+              full_name: fullName,
+              role: role,
+              school_name: schoolName,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             });
 
-            if (!response.ok) {
-              console.error("API profile creation failed");
-              setError(
-                "Account created but profile setup failed. Please contact an administrator to fix your account role."
-              );
-            } else {
-              // If API call succeeded, clear the error
-              setError(null);
+          // Check if profile was actually created despite any error
+          // (might have been created by trigger or the error was a false positive)
+          if (profileError) {
+            // Wait a moment and check if profile exists now
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            const { data: checkProfile } = await supabase
+              .from("profiles")
+              .select("id")
+              .eq("id", authData.user.id)
+              .single();
+
+            // If profile exists, the error was a false positive (likely trigger created it)
+            if (!checkProfile && profileError.code !== "23505") {
+              // 23505 is unique violation, which means profile already exists (handled by trigger)
+              console.error("Profile creation error:", profileError);
+
+              // Fallback: Use API endpoint to create profile
+              try {
+                const response = await fetch("/api/auth/create-profile", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    full_name: fullName,
+                    role: role,
+                    school_name: schoolName,
+                  }),
+                });
+
+                if (!response.ok) {
+                  console.error("API profile creation failed");
+                  // Only show error if both direct and API methods failed
+                  // But don't block the redirect - account was created successfully
+                  setError(
+                    "Account created successfully! Profile setup may need attention. You can continue."
+                  );
+                }
+              } catch (apiError) {
+                console.error("API profile creation error:", apiError);
+                // Only show error if both methods failed, but don't block redirect
+                setError(
+                  "Account created successfully! Profile setup may need attention. You can continue."
+                );
+              }
             }
-          } catch (apiError) {
-            console.error("API profile creation error:", apiError);
-            setError(
-              "Account created but profile setup failed. Please contact an administrator to fix your account role."
-            );
+            // If profile exists, no error to show - everything worked
+          }
+        } else {
+          // Profile exists, just update it with the provided information
+          const { error: updateError } = await supabase
+            .from("profiles")
+            .update({
+              full_name: fullName,
+              role: role,
+              school_name: schoolName,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", authData.user.id);
+
+          if (updateError) {
+            console.error("Profile update error:", updateError);
+            // Don't show error for update failures, profile already exists
           }
         }
       }
 
-      router.push("/auth/signup-success");
+      // Always redirect to success page - account was created
+      // Small delay to ensure any error messages are visible if needed
+      setTimeout(() => {
+        router.push("/auth/signup-success");
+      }, 100);
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred");
     } finally {

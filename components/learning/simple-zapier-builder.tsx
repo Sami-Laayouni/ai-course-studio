@@ -307,6 +307,10 @@ interface SimpleZapierBuilderProps {
   onClose: () => void;
   courseId?: string;
   lessonId?: string;
+  title?: string;
+  description?: string;
+  activityId?: string;
+  initialContent?: any;
 }
 
 const NODE_TYPES = [
@@ -375,6 +379,10 @@ export default function SimpleZapierBuilder({
   onClose,
   courseId,
   lessonId,
+  title = "",
+  description = "",
+  activityId,
+  initialContent,
 }: SimpleZapierBuilderProps) {
   const [nodes, setNodes] = useState<ActivityNode[]>([]);
   const [connections, setConnections] = useState<
@@ -387,8 +395,9 @@ export default function SimpleZapierBuilder({
   >([]);
   const [showContextSelector, setShowContextSelector] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [workflowTitle, setWorkflowTitle] = useState("");
-  const [workflowDescription, setWorkflowDescription] = useState("");
+  // Use props for title/description instead of internal state
+  const workflowTitle = title || "";
+  const workflowDescription = description || "";
   const [toolMode, setToolMode] = useState<"select">("select");
   const [activeTab, setActiveTab] = useState<"nodes" | "settings">("nodes");
   const [showPreview, setShowPreview] = useState(false);
@@ -433,7 +442,9 @@ export default function SimpleZapierBuilder({
   const connectionIdCounter = useRef(0);
 
   // Auto-save functionality
-  const autoSave = () => {
+  const autoSave = async () => {
+    if (!courseId) return;
+
     setIsAutoSaving(true);
     try {
       const activityData = {
@@ -442,16 +453,67 @@ export default function SimpleZapierBuilder({
         nodes,
         connections,
         courseId,
+        activityId,
+        context_sources: selectedContextSources,
         lastSaved: new Date().toISOString(),
       };
 
-      const saveKey = autoSaveKey || `draft_${Date.now()}`;
-      localStorage.setItem(
-        `activity_draft_${saveKey}`,
-        JSON.stringify(activityData)
-      );
+      // Use consistent key based on activityId or courseId
+      const saveKey = activityId || autoSaveKey || `draft_${courseId}`;
+      const draftKey = `activity_draft_${saveKey}`;
+
+      localStorage.setItem(draftKey, JSON.stringify(activityData));
       setAutoSaveKey(saveKey);
-      console.log("Auto-saved activity draft:", saveKey, activityData);
+      console.log("Auto-saved activity draft:", draftKey, activityData);
+
+      // If we have an activityId, also save to database
+      if (activityId && courseId) {
+        try {
+          const content = {
+            nodes: nodes.map((node) => ({
+              id: node.id,
+              type: node.type,
+              title: node.title,
+              description: node.description,
+              position: node.position,
+              config: node.config || {},
+            })),
+            connections: connections.map((conn) => ({
+              id: conn.id,
+              from: conn.from,
+              to: conn.to,
+            })),
+            workflow_type: "enhanced",
+            context_sources: selectedContextSources,
+          };
+
+          const response = await fetch("/api/activities", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: activityId,
+              course_id: courseId,
+              title: workflowTitle,
+              description: workflowDescription,
+              content: content,
+              activity_type: "interactive", // Use 'interactive' which exists in schema
+              is_adaptive: true,
+              // Removed columns that don't exist: activity_subtype, is_enhanced
+            }),
+          });
+
+          if (response.ok) {
+            console.log("Auto-saved to database successfully");
+          } else {
+            console.error(
+              "Auto-save to database failed:",
+              await response.text()
+            );
+          }
+        } catch (error) {
+          console.error("Error auto-saving to database:", error);
+        }
+      }
     } catch (error) {
       console.error("Auto-save failed:", error);
     } finally {
@@ -459,42 +521,66 @@ export default function SimpleZapierBuilder({
     }
   };
 
-  // Load draft on component mount
+  // Load draft on component mount (only if no initialContent provided)
   useEffect(() => {
-    const savedDrafts = Object.keys(localStorage).filter((key) =>
-      key.startsWith("activity_draft_")
-    );
-    if (savedDrafts.length > 0) {
-      const latestDraft = savedDrafts[savedDrafts.length - 1];
-      const draftData = localStorage.getItem(latestDraft);
+    if (initialContent) {
+      // initialContent will be loaded by the other useEffect
+      return;
+    }
+
+    // Try to load draft for this specific activity/course
+    const draftKey = activityId
+      ? `activity_draft_${activityId}`
+      : courseId
+      ? `activity_draft_draft_${courseId}`
+      : null;
+
+    if (draftKey) {
+      const draftData = localStorage.getItem(draftKey);
       if (draftData) {
         try {
           const parsed = JSON.parse(draftData);
-          setWorkflowTitle(parsed.title || "");
-          setWorkflowDescription(parsed.description || "");
-          setNodes(parsed.nodes || []);
-          setConnections(parsed.connections || []);
-          setAutoSaveKey(latestDraft.replace("activity_draft_", ""));
-          console.log("Loaded draft:", latestDraft, parsed);
+          // Only load if we don't have nodes already
+          if (nodes.length === 0 && parsed.nodes && parsed.nodes.length > 0) {
+            setNodes(parsed.nodes || []);
+            setConnections(parsed.connections || []);
+            if (parsed.context_sources) {
+              setSelectedContextSources(parsed.context_sources);
+            }
+            setAutoSaveKey(activityId || courseId || "");
+            console.log("Loaded draft:", draftKey, parsed);
+          }
         } catch (error) {
           console.error("Error loading draft:", error);
         }
       }
     }
-  }, []);
+  }, [activityId, courseId, initialContent]);
 
   // Debug selectedNode changes
   useEffect(() => {
     console.log("selectedNode changed:", selectedNode);
   }, [selectedNode]);
 
+  // Auto-save when nodes or connections change (debounced)
+  useEffect(() => {
+    // Don't auto-save on initial load
+    if (nodes.length === 0 && connections.length === 0) return;
+
+    const timeoutId = setTimeout(() => {
+      autoSave();
+    }, 2000); // Auto-save 2 seconds after last change
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, connections, selectedContextSources]);
+
   // Save state to history
   const saveToHistory = () => {
     const newState = {
       nodes: [...nodes],
       connections: [...connections],
-      workflowTitle,
-      workflowDescription,
+      // Note: workflowTitle and workflowDescription come from props, not state
     };
 
     const newHistory = history.slice(0, historyIndex + 1);
@@ -516,8 +602,7 @@ export default function SimpleZapierBuilder({
       const prevState = history[historyIndex - 1];
       setNodes(prevState.nodes);
       setConnections(prevState.connections);
-      setWorkflowTitle(prevState.workflowTitle);
-      setWorkflowDescription(prevState.workflowDescription);
+      // Note: workflowTitle and workflowDescription come from props, not state
       setSelectedNode(null);
       setHistoryIndex(historyIndex - 1);
       console.log("Undo to state:", historyIndex - 1);
@@ -530,8 +615,7 @@ export default function SimpleZapierBuilder({
       const nextState = history[historyIndex + 1];
       setNodes(nextState.nodes);
       setConnections(nextState.connections);
-      setWorkflowTitle(nextState.workflowTitle);
-      setWorkflowDescription(nextState.workflowDescription);
+      // Note: workflowTitle and workflowDescription come from props, not state
       setSelectedNode(null);
       setHistoryIndex(historyIndex + 1);
       console.log("Redo to state:", historyIndex + 1);
@@ -796,9 +880,22 @@ export default function SimpleZapierBuilder({
   const getNextNodeId = () => `node_${++nodeIdCounter.current}`;
   const getNextConnectionId = () => `conn_${++connectionIdCounter.current}`;
 
-  // Auto-add start and end nodes
+  // Load initial content if provided
   useEffect(() => {
-    if (nodes.length === 0) {
+    if (
+      initialContent &&
+      initialContent.nodes &&
+      initialContent.nodes.length > 0
+    ) {
+      // Load saved content
+      setNodes(initialContent.nodes || []);
+      setConnections(initialContent.connections || []);
+      if (initialContent.context_sources) {
+        setSelectedContextSources(initialContent.context_sources);
+      }
+      console.log("Loaded initial content:", initialContent);
+    } else if (nodes.length === 0 && !initialContent) {
+      // Only auto-add start/end nodes if no initial content and no existing nodes
       const startNode: ActivityNode = {
         id: getNextNodeId(),
         type: "start",
@@ -823,7 +920,7 @@ export default function SimpleZapierBuilder({
       };
       setNodes([startNode, endNode]);
     }
-  }, []);
+  }, [initialContent]);
 
   const addNode = (nodeType: any, position: { x: number; y: number }) => {
     const newNode: ActivityNode = {
@@ -1199,7 +1296,11 @@ export default function SimpleZapierBuilder({
           alert(`Please add a YouTube URL for the video node "${node.title}"`);
           return false;
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(`Please set points for the video node "${node.title}"`);
           return false;
         }
@@ -1208,7 +1309,11 @@ export default function SimpleZapierBuilder({
           alert(`Please add a title for the PDF node "${node.title}"`);
           return false;
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(`Please set points for the PDF node "${node.title}"`);
           return false;
         }
@@ -1217,7 +1322,11 @@ export default function SimpleZapierBuilder({
           alert(`Please add a prompt for the AI Chat node "${node.title}"`);
           return false;
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(`Please set points for the AI Chat node "${node.title}"`);
           return false;
         }
@@ -1239,18 +1348,26 @@ export default function SimpleZapierBuilder({
             return false;
           }
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(`Please set points for the quiz node "${node.title}"`);
           return false;
         }
       } else if (node.type === "custom") {
-        if (!node.config.instructions?.trim()) {
+        if (!node.config.agentic_requirements?.trim()) {
           alert(
-            `Please add instructions for the custom activity node "${node.title}"`
+            `Please add agentic requirements for the custom activity node "${node.title}"`
           );
           return false;
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(
             `Please set points for the custom activity node "${node.title}"`
           );
@@ -1272,7 +1389,10 @@ export default function SimpleZapierBuilder({
         return;
       }
 
-      const activityId = generateUUID();
+      // Use existing activityId if provided, otherwise generate new one
+      const finalActivityId = activityId || generateUUID();
+      const isUpdate = !!activityId;
+
       // Check for enhanced features
       const hasAIChatNodes = nodes.some((n) => n.type === "ai_chat");
       const hasAIBranching = nodes.some(
@@ -1281,13 +1401,28 @@ export default function SimpleZapierBuilder({
       const hasUploadNodes = nodes.some((n) => n.type === "pdf");
       const hasVideoNodes = nodes.some((n) => n.type === "video");
 
+      // Calculate total points from nodes (sum of all node points)
+      const totalPoints = nodes.reduce((sum, node) => {
+        const nodePoints = node.config?.points;
+        return sum + (nodePoints && nodePoints > 0 ? nodePoints : 0);
+      }, 0);
+
+      // Calculate total estimated duration from nodes
+      const totalDuration = nodes.reduce((sum, node) => {
+        const nodeDuration =
+          node.config?.duration ||
+          node.config?.estimated_time ||
+          node.config?.estimated_duration;
+        return sum + (nodeDuration && nodeDuration > 0 ? nodeDuration : 0);
+      }, 0);
+
       const activity = {
-        id: activityId,
+        id: finalActivityId,
         type: "enhanced_workflow",
-        title: workflowTitle,
+        title: workflowTitle || "Custom Activity",
         description:
           workflowDescription ||
-          "A custom learning activity created with the simple builder",
+          "A custom learning activity created with the enhanced builder",
         content: {
           nodes: nodes.map((node) => ({
             id: node.id,
@@ -1350,8 +1485,9 @@ export default function SimpleZapierBuilder({
               }
             : null,
         },
-        points: Math.max(50, nodes.length * 15),
-        estimated_duration: Math.max(15, nodes.length * 5),
+        points: totalPoints > 0 ? totalPoints : Math.max(50, nodes.length * 15),
+        estimated_duration:
+          totalDuration > 0 ? totalDuration : Math.max(15, nodes.length * 5),
         difficulty_level: Math.min(
           5,
           Math.max(1, Math.floor(nodes.length / 2))
@@ -1366,149 +1502,114 @@ export default function SimpleZapierBuilder({
         performance_tracking: hasAIBranching || hasAIChatNodes,
       };
 
-      // Create shareable URL
-      const shareUrl = `${window.location.origin}/learn/activities/${activityId}`;
+      // Validate required fields
+      if (!workflowTitle?.trim()) {
+        alert("Please enter a title for your activity");
+        setIsGenerating(false);
+        return;
+      }
 
-      // Save activity (in a real app, this would save to database)
-      const activityKey = `activity_${activityId}`;
-      localStorage.setItem(activityKey, JSON.stringify(activity));
-      setSavedActivityId(activityId);
-      console.log("Activity saved with key:", activityKey);
-      console.log("Activity data:", activity);
-
-      // Also save to a more accessible key for testing
-      localStorage.setItem(`test_activity`, JSON.stringify(activity));
-      console.log("Also saved as test_activity for debugging");
-
-      // Show success with URL
-      alert(
-        `Activity created successfully!\n\nShare this URL with students:\n${shareUrl}\n\nActivity ID: ${activityId}\n\nYou can now preview the activity or close this builder.`
-      );
+      if (!courseId) {
+        alert(
+          "Error: Missing course information. Please ensure you're creating the activity from within a course."
+        );
+        setIsGenerating(false);
+        return;
+      }
 
       // Save to database
       console.log(
-        "Saving activity to database - courseId:",
-        courseId,
-        "lessonId:",
-        lessonId
+        `Saving activity to database - ${isUpdate ? "UPDATE" : "CREATE"}`,
+        { courseId, lessonId, activityId: finalActivityId }
       );
 
-      if (courseId) {
-        try {
-          const response = await fetch("/api/activities", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              title: activity.title,
-              description: activity.description,
-              content: activity.content,
-              course_id: courseId,
-              lesson_id: lessonId || null, // Optional now
-              points: activity.points || 10,
-              estimated_duration: activity.estimated_duration || 10,
-              activity_type: "custom",
-              activity_subtype: "zapier_workflow",
-              order_index: 0,
-              is_enhanced: true,
-              is_adaptive: true,
-            }),
-          });
+      try {
+        const url = "/api/activities";
+        const method = isUpdate ? "PUT" : "POST";
 
-          const result = await response.json();
+        const requestBody: any = {
+          title: activity.title,
+          description: activity.description,
+          content: activity.content,
+          course_id: courseId,
+          lesson_id: lessonId || null,
+          points: activity.points,
+          estimated_duration: activity.estimated_duration,
+          activity_type: "interactive",
+          order_index: 0,
+          is_adaptive: true,
+        };
 
-          if (response.ok && result.success) {
-            console.log("Activity saved to database:", result.activity);
-            alert(
-              `Activity saved to database successfully!\n\nActivity ID: ${result.activity.id}\nTitle: ${result.activity.title}\nCheck the lesson editor to see the activity.`
-            );
-          } else {
-            console.error("Failed to save activity to database:", result);
-            alert(
-              `Error saving to database: ${result.error || "Unknown error"}`
-            );
-
-            // Fallback to localStorage
-            console.log("Falling back to localStorage...");
-            const savedLessons = JSON.parse(
-              localStorage.getItem("lessons") || "[]"
-            );
-            const lessonIndex = savedLessons.findIndex(
-              (l: any) => l.id === lessonId
-            );
-
-            if (lessonIndex !== -1) {
-              savedLessons[lessonIndex].activities =
-                savedLessons[lessonIndex].activities || [];
-              savedLessons[lessonIndex].activities.push({
-                id: activityId,
-                type: "simple_workflow",
-                title: activity.title,
-                description: activity.description,
-                duration: activity.estimated_duration || 10,
-                points: activity.points || 10,
-                order: savedLessons[lessonIndex].activities.length,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              });
-              localStorage.setItem("lessons", JSON.stringify(savedLessons));
-              alert("Activity saved to localStorage as fallback.");
-            }
-          }
-        } catch (error) {
-          console.error("Error saving activity to database:", error);
-          alert(
-            `Error saving to database: ${
-              error instanceof Error ? error.message : "Unknown error"
-            }`
-          );
-
-          // Fallback to localStorage
-          console.log("Falling back to localStorage...");
-          const savedLessons = JSON.parse(
-            localStorage.getItem("lessons") || "[]"
-          );
-          const lessonIndex = savedLessons.findIndex(
-            (l: any) => l.id === lessonId
-          );
-
-          if (lessonIndex !== -1) {
-            savedLessons[lessonIndex].activities =
-              savedLessons[lessonIndex].activities || [];
-            savedLessons[lessonIndex].activities.push({
-              id: activityId,
-              type: "simple_workflow",
-              title: activity.title,
-              description: activity.description,
-              duration: activity.estimated_duration || 10,
-              points: activity.points || 10,
-              order: savedLessons[lessonIndex].activities.length,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
-            localStorage.setItem("lessons", JSON.stringify(savedLessons));
-            alert("Activity saved to localStorage as fallback.");
-          }
+        // Add id for updates
+        if (isUpdate) {
+          requestBody.id = finalActivityId;
         }
-      } else {
-        console.log("Missing courseId:", { courseId });
-        alert("Error: Missing course information");
-      }
 
-      onActivityCreated(activity);
-
-      // Force refresh the lesson editor by triggering a custom event
-      window.dispatchEvent(
-        new CustomEvent("activitySaved", {
-          detail: {
-            activityId,
-            lessonId,
-            courseId,
-            activity,
+        const response = await fetch(url, {
+          method,
+          headers: {
+            "Content-Type": "application/json",
           },
-        })
-      );
+          body: JSON.stringify(requestBody),
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+          console.log("Activity saved to database:", result.activity);
+
+          // Update activityId if it was a new activity
+          const savedActivityId = result.activity?.id || finalActivityId;
+
+          // Save to localStorage as backup
+          const activityKey = `activity_${savedActivityId}`;
+          localStorage.setItem(activityKey, JSON.stringify(activity));
+          setSavedActivityId(savedActivityId);
+
+          // Show success message
+          const successMessage = isUpdate
+            ? `Activity updated successfully!\n\nActivity ID: ${savedActivityId}\nTitle: ${result.activity.title}`
+            : `Activity created successfully!\n\nActivity ID: ${savedActivityId}\nTitle: ${result.activity.title}\n\nCheck the lesson editor to see the activity.`;
+
+          alert(successMessage);
+
+          // Call the callback with the saved activity
+          const savedActivity = {
+            ...activity,
+            id: savedActivityId,
+            ...result.activity,
+          };
+          onActivityCreated(savedActivity);
+
+          // Force refresh the lesson editor by triggering a custom event
+          window.dispatchEvent(
+            new CustomEvent("activitySaved", {
+              detail: {
+                activityId: savedActivityId,
+                lessonId,
+                courseId,
+                activity: savedActivity,
+              },
+            })
+          );
+        } else {
+          console.error("Failed to save activity to database:", result);
+          const errorMessage =
+            result.error || result.details || "Unknown error";
+          alert(
+            `Error saving to database: ${errorMessage}\n\nPlease check the console for more details.`
+          );
+          throw new Error(errorMessage);
+        }
+      } catch (error) {
+        console.error("Error saving activity to database:", error);
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        alert(
+          `Error saving to database: ${errorMessage}\n\nPlease check your connection and try again.`
+        );
+        throw error;
+      }
     } catch (error) {
       console.error("Error generating activity:", error);
       alert("Error creating activity. Please try again.");
@@ -2034,12 +2135,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.duration || 0}
+                  value={selectedNode.config.duration ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      duration: Number(e.target.value),
+                      duration: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter duration"
                   className="mt-1"
                 />
               </div>
@@ -2058,12 +2162,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 5}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2095,12 +2202,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.estimated_time || 5}
+                  value={selectedNode.config.estimated_time ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      estimated_time: Number(e.target.value),
+                      estimated_time: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter reading time"
                   className="mt-1"
                 />
               </div>
@@ -2110,12 +2220,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 5}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2162,12 +2275,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.max_turns || 10}
+                  value={selectedNode.config.max_turns ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      max_turns: Number(e.target.value),
+                      max_turns: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter max turns"
                   className="mt-1"
                 />
               </div>
@@ -2177,12 +2293,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 10}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2271,12 +2390,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.time_limit || 0}
+                  value={selectedNode.config.time_limit ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      time_limit: Number(e.target.value),
+                      time_limit: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter time limit"
                   className="mt-1"
                 />
               </div>
@@ -2286,12 +2408,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.passing_score || 70}
+                  value={selectedNode.config.passing_score ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      passing_score: Number(e.target.value),
+                      passing_score: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter passing score"
                   min="0"
                   max="100"
                   className="mt-1"
@@ -2303,12 +2428,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 10}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2343,12 +2471,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.estimated_duration || 15}
+                  value={selectedNode.config.estimated_duration ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      estimated_duration: Number(e.target.value),
+                      estimated_duration: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter duration"
                   className="mt-1"
                 />
               </div>
@@ -2358,12 +2489,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 15}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2517,9 +2651,13 @@ export default function SimpleZapierBuilder({
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
-      {/* Zapier-style Header */}
+      {/* Zapier-style Header with Back Button */}
       <div className="flex items-center justify-between px-6 py-4 border-b bg-white shadow-sm">
         <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
           <div className="p-2 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg">
             <Zap className="h-6 w-6 text-white" />
           </div>
@@ -2528,6 +2666,7 @@ export default function SimpleZapierBuilder({
               Activity Builder
             </h2>
             <p className="text-sm text-gray-600">
+              {workflowTitle || "Enhanced Activity Builder"}
               {isAutoSaving && (
                 <span className="ml-2 text-green-600 text-xs inline">
                   Saving...
@@ -2616,14 +2755,7 @@ export default function SimpleZapierBuilder({
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={onClose}
-              className="h-8 px-4 text-sm"
-            >
-              <X className="h-3 w-3 mr-1" />
-              Cancel
-            </Button>
+            {/* Cancel button removed - use Back button instead */}
             {savedActivityId && (
               <Button
                 variant="outline"
@@ -2678,38 +2810,27 @@ export default function SimpleZapierBuilder({
             </TabsList>
 
             <TabsContent value="nodes" className="p-3 space-y-3">
-              {/* Activity Info */}
-              <div className="space-y-2">
-                <div>
-                  <Label className="text-xs font-medium text-gray-600">
+              {/* Activity Info - Title/Description come from props, not editable here */}
+              {workflowTitle && (
+                <div className="p-2 bg-blue-50 dark:bg-blue-950 rounded-md">
+                  <p className="text-xs font-medium text-gray-600 mb-1">
                     Activity Title
-                  </Label>
-                  <Input
-                    value={workflowTitle}
-                    onChange={(e) => {
-                      setWorkflowTitle(e.target.value);
-                      autoSave();
-                    }}
-                    placeholder="Enter activity title..."
-                    className="mt-1 h-8 text-sm"
-                  />
+                  </p>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {workflowTitle}
+                  </p>
+                  {workflowDescription && (
+                    <>
+                      <p className="text-xs font-medium text-gray-600 mt-2 mb-1">
+                        Description
+                      </p>
+                      <p className="text-sm text-gray-700">
+                        {workflowDescription}
+                      </p>
+                    </>
+                  )}
                 </div>
-                <div>
-                  <Label className="text-xs font-medium text-gray-600">
-                    Description
-                  </Label>
-                  <Textarea
-                    value={workflowDescription}
-                    onChange={(e) => {
-                      setWorkflowDescription(e.target.value);
-                      autoSave();
-                    }}
-                    placeholder="Describe this learning activity..."
-                    rows={2}
-                    className="mt-1 text-sm"
-                  />
-                </div>
-              </div>
+              )}
 
               {/* Node Types */}
               <div>
@@ -2930,66 +3051,7 @@ export default function SimpleZapierBuilder({
             </TabsContent>
 
             <TabsContent value="settings" className="p-4">
-              {savedActivityId ? (
-                <div className="space-y-4">
-                  <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                    <h3 className="text-lg font-semibold text-green-800 mb-2">
-                      Activity Created Successfully!
-                    </h3>
-                    <p className="text-green-700 text-sm mb-3">
-                      Your activity has been saved and is ready to share with
-                      students.
-                    </p>
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium text-green-800">
-                        Share this URL with students:
-                      </Label>
-                      <div className="flex gap-2">
-                        <Input
-                          value={`${window.location.origin}/learn/activities/${savedActivityId}`}
-                          readOnly
-                          className="text-sm"
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            navigator.clipboard.writeText(
-                              `${window.location.origin}/learn/activities/${savedActivityId}`
-                            );
-                            alert("URL copied to clipboard!");
-                          }}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowPreview(true)}
-                      >
-                        <Eye className="h-4 w-4 mr-2" />
-                        Preview Activity
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          window.open(
-                            `${window.location.origin}/learn/activities/${savedActivityId}`,
-                            "_blank"
-                          );
-                        }}
-                      >
-                        <ExternalLink className="h-4 w-4 mr-2" />
-                        Open in New Tab
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : selectedNode ? (
+              {selectedNode ? (
                 renderNodeParameters()
               ) : (
                 <div className="text-center text-gray-500 py-8">

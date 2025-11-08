@@ -34,7 +34,35 @@ export default function LoginPage() {
       // Wait a moment for cookies to be set, then redirect
       // Use window.location for a full page reload to ensure cookies sync
       await new Promise((resolve) => setTimeout(resolve, 100))
-      window.location.href = "/dashboard"
+      
+      // Check user role and assessment status
+      if (data.user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("role, has_completed_assessment")
+          .eq("id", data.user.id)
+          .single()
+        
+        const userRole = profile?.role || "student"
+        
+        // Redirect based on role and assessment status
+        if (userRole === "admin") {
+          window.location.href = "/admin"
+        } else if (userRole === "teacher") {
+          window.location.href = "/dashboard"
+        } else if (userRole === "student") {
+          // Check if student has completed assessment
+          if (!profile?.has_completed_assessment) {
+            window.location.href = "/learn/assessment"
+          } else {
+            window.location.href = "/learn"
+          }
+        } else {
+          window.location.href = "/dashboard"
+        }
+      } else {
+        window.location.href = "/dashboard"
+      }
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred")
       setIsLoading(false)

@@ -1033,52 +1033,6 @@ export default function AIChatPage({ params }: AIChatPageProps) {
                 </CardContent>
               </Card>
             )}
-
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Quick Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() =>
-                    setInputMessage(
-                      "Can you explain this concept in simpler terms?"
-                    )
-                  }
-                >
-                  <BookOpen className="h-4 w-4 mr-2" />
-                  Simplify Explanation
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() =>
-                    setInputMessage("Can you give me some practice problems?")
-                  }
-                >
-                  <RefreshCw className="h-4 w-4 mr-2" />
-                  Practice Problems
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() =>
-                    setInputMessage(
-                      "I think I understand this now. Can you test my knowledge?"
-                    )
-                  }
-                >
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Test My Knowledge
-                </Button>
-              </CardContent>
-            </Card>
           </div>
         </div>
       </div>

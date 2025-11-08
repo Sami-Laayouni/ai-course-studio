@@ -21,6 +21,8 @@ import {
   FileText,
   Calendar,
   AlertCircle,
+  Plus,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -38,6 +40,12 @@ export default async function StudentLearnPage() {
     .select("*")
     .eq("id", data.user.id)
     .single();
+
+  // Check if student has completed the learning style assessment
+  // Redirect to assessment if not completed
+  if (profile?.role === "student" && !profile?.has_completed_assessment) {
+    redirect("/learn/assessment");
+  }
 
   // Get enrolled courses with progress
   const { data: enrollments } = await supabase
@@ -105,6 +113,251 @@ export default async function StudentLearnPage() {
     .eq("student_id", data.user.id)
     .order("assigned_at", { ascending: false });
 
+  // Get all assigned activities from enrolled courses
+  // This includes activities from lessons and direct course activities
+  const courseIds = enrollments?.map((e) => e.course_id) || [];
+  let allAssignedActivities: any[] = [];
+
+  console.log("=== ACTIVITIES DEBUG ===");
+  console.log("Course IDs from enrollments:", courseIds);
+  console.log("Number of enrollments:", enrollments?.length || 0);
+  console.log("User ID:", data.user.id);
+
+  if (courseIds.length > 0) {
+    try {
+      // Try to get all activities at once first (simpler query)
+      let allActivitiesData: any[] = [];
+
+      // First, try querying all activities for enrolled courses
+      // The API route uses server-side client which might bypass RLS issues
+      // Try direct query first
+      const { data: activitiesData, error: activitiesError } = await supabase
+        .from("activities")
+        .select("*")
+        .in("course_id", courseIds)
+        .order("order_index", { ascending: true });
+
+      // If that fails due to RLS, try alternative approach
+      if (activitiesError) {
+        const errorCode = activitiesError.code || "";
+        const errorMessage = activitiesError.message || "";
+
+        if (
+          errorCode === "PGRST116" ||
+          errorMessage.includes("permission denied") ||
+          errorMessage.includes("row-level security")
+        ) {
+          console.log("RLS blocking query, trying alternative approach...");
+
+          // Try querying through enrollments relationship
+          const { data: enrollmentActivities, error: enrollmentError } =
+            await supabase
+              .from("enrollments")
+              .select(
+                `
+              course_id,
+              courses!inner(
+                activities(*)
+              )
+            `
+              )
+              .eq("student_id", data.user.id);
+
+          if (!enrollmentError && enrollmentActivities) {
+            enrollmentActivities.forEach((enrollment: any) => {
+              if (enrollment.courses?.activities) {
+                allActivitiesData = allActivitiesData.concat(
+                  enrollment.courses.activities
+                );
+              }
+            });
+            console.log(
+              `Alternative query found ${allActivitiesData.length} activities`
+            );
+          }
+        }
+      }
+
+      // If direct query worked, use that data
+      if (!activitiesError && activitiesData) {
+        allActivitiesData = activitiesData;
+        console.log(
+          `Bulk query successful: Found ${allActivitiesData.length} activities`
+        );
+      } else if (activitiesError) {
+        console.error(
+          "Error fetching activities (bulk query):",
+          activitiesError
+        );
+        console.error(
+          "Error details:",
+          JSON.stringify(activitiesError, null, 2)
+        );
+        console.error("Error code:", activitiesError.code);
+        console.error("Error message:", activitiesError.message);
+        console.error("Error hint:", activitiesError.hint);
+
+        // If alternative approach didn't work, try using API route as fallback
+        if (allActivitiesData.length === 0) {
+          console.log("Trying API route as fallback...");
+          try {
+            // Use API route which uses server-side client (might bypass RLS)
+            const baseUrl =
+              process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+            for (const courseId of courseIds) {
+              try {
+                const apiResponse = await fetch(
+                  `${baseUrl}/api/activities?course_id=${courseId}`,
+                  {
+                    cache: "no-store",
+                  }
+                );
+
+                if (apiResponse.ok) {
+                  const apiData = await apiResponse.json();
+                  if (apiData.success && apiData.activities) {
+                    console.log(
+                      `API route found ${apiData.activities.length} activities for course ${courseId}`
+                    );
+                    allActivitiesData = allActivitiesData.concat(
+                      apiData.activities
+                    );
+                  }
+                }
+              } catch (apiError) {
+                console.error(
+                  `API route error for course ${courseId}:`,
+                  apiError
+                );
+              }
+            }
+          } catch (error) {
+            console.error("Error using API route:", error);
+          }
+        }
+      }
+
+      console.log(
+        "=== ACTIVITIES SUMMARY ===",
+        "\nTotal fetched:",
+        allActivitiesData?.length || 0,
+        "activities",
+        "\nCourse IDs queried:",
+        courseIds,
+        "\nActivities data:",
+        allActivitiesData
+      );
+
+      if (allActivitiesData.length > 0) {
+        console.log(
+          "Sample activity:",
+          JSON.stringify(allActivitiesData[0], null, 2)
+        );
+      } else {
+        console.warn("WARNING: No activities found for enrolled courses!");
+        console.warn("This could mean:");
+        console.warn("1. The course is not published");
+        console.warn("2. RLS policies are blocking the query");
+        console.warn("3. There are no activities in the enrolled courses");
+      }
+
+      // Get all lessons for context (even unpublished ones for lesson titles)
+      const { data: lessonsData, error: lessonsError } = await supabase
+        .from("lessons")
+        .select(
+          `
+          id,
+          title,
+          course_id
+        `
+        )
+        .in("course_id", courseIds)
+        .order("order_index", { ascending: true });
+
+      if (lessonsError) {
+        console.error("Error fetching lessons:", lessonsError);
+      }
+
+      // Get course titles separately to avoid join issues
+      const { data: coursesData, error: coursesError } = await supabase
+        .from("courses")
+        .select("id, title")
+        .in("id", courseIds);
+
+      if (coursesError) {
+        console.error("Error fetching courses:", coursesError);
+      }
+
+      // Create maps for quick lookup
+      const courseMap = new Map();
+      coursesData?.forEach((course: any) => {
+        courseMap.set(course.id, course.title);
+      });
+
+      const lessonMap = new Map();
+      lessonsData?.forEach((lesson: any) => {
+        lessonMap.set(lesson.id, lesson.title);
+      });
+
+      // Collect all activities with lesson context
+      // Process ALL activities we fetched
+      if (allActivitiesData && allActivitiesData.length > 0) {
+        console.log("Processing", allActivitiesData.length, "activities");
+        allActivitiesData.forEach((activity: any) => {
+          const courseTitle = courseMap.get(activity.course_id) || null;
+          const lessonTitle =
+            activity.lesson_id && lessonMap.has(activity.lesson_id)
+              ? lessonMap.get(activity.lesson_id)
+              : null;
+
+          allAssignedActivities.push({
+            ...activity,
+            course_title: courseTitle,
+            lesson_title: lessonTitle,
+            lesson_id: activity.lesson_id || null,
+          });
+        });
+
+        console.log(
+          "Added",
+          allAssignedActivities.length,
+          "activities to display list"
+        );
+
+        console.log(
+          "All assigned activities:",
+          allAssignedActivities.length,
+          allAssignedActivities
+        );
+
+        // Get student progress for all activities
+        const activityIds = allAssignedActivities.map((a) => a.id);
+        if (activityIds.length > 0) {
+          const { data: progressData } = await supabase
+            .from("student_progress")
+            .select("*")
+            .eq("student_id", data.user.id)
+            .in("activity_id", activityIds);
+
+          // Map progress to activities
+          const progressMap = new Map();
+          progressData?.forEach((p) => {
+            progressMap.set(p.activity_id, p);
+          });
+
+          // Add progress to activities
+          allAssignedActivities = allAssignedActivities.map((activity) => ({
+            ...activity,
+            progress: progressMap.get(activity.id),
+          }));
+        }
+      }
+    } catch (error) {
+      console.error("Error loading activities:", error);
+      // Continue with empty activities array if there's an error
+    }
+  }
+
   // Calculate overall stats
   const totalCourses = enrollments?.length || 0;
   const completedActivities =
@@ -125,207 +378,129 @@ export default async function StudentLearnPage() {
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-foreground">
-            Welcome back, {profile?.full_name || "Student"}!
+            Welcome, {profile?.full_name || "Student"}!
           </h1>
-          <p className="text-muted-foreground mt-1">
-            Continue your learning journey
-          </p>
         </div>
 
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Enrolled Courses
-              </CardTitle>
-              <BookOpen className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{totalCourses}</div>
-              <p className="text-xs text-muted-foreground">
-                Active learning paths
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Completed Activities
-              </CardTitle>
-              <CheckCircle className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{completedActivities}</div>
-              <p className="text-xs text-muted-foreground">This week</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">Time Spent</CardTitle>
-              <Clock className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {Math.round(totalTimeSpent / 60)}h
-              </div>
-              <p className="text-xs text-muted-foreground">Learning time</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Achievement Score
-              </CardTitle>
-              <Trophy className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">85%</div>
-              <p className="text-xs text-muted-foreground">
-                Average performance
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Notifications and Assignments */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          {/* Notifications */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Bell className="h-5 w-5" />
-                Notifications
-                {unreadNotifications > 0 && (
-                  <Badge variant="destructive" className="ml-2">
-                    {unreadNotifications}
-                  </Badge>
-                )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {notifications && notifications.length > 0 ? (
-                <div className="space-y-3">
-                  {notifications.slice(0, 5).map((notification) => (
-                    <div
-                      key={notification.id}
-                      className="flex items-start gap-3 p-3 bg-muted rounded-lg"
-                    >
-                      <AlertCircle className="h-4 w-4 mt-0.5 text-blue-500" />
-                      <div className="flex-1">
-                        <h4 className="font-medium text-sm">
-                          {notification.title}
-                        </h4>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {notification.message}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          {new Date(
-                            notification.created_at
-                          ).toLocaleDateString()}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                  {notifications.length > 5 && (
-                    <Button variant="outline" size="sm" className="w-full">
-                      View All Notifications
-                    </Button>
-                  )}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  No new notifications
-                </p>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Assignments */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="h-5 w-5" />
-                Assignments
-                {pendingAssignments > 0 && (
-                  <Badge variant="destructive" className="ml-2">
-                    {pendingAssignments}
-                  </Badge>
-                )}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {assignments && assignments.length > 0 ? (
-                <div className="space-y-3">
-                  {assignments.slice(0, 5).map((assignment) => {
-                    const submission = assignment.assignment_submissions?.[0];
-                    const isOverdue =
-                      assignment.due_date &&
-                      new Date(assignment.due_date) < new Date();
-                    const isSubmitted =
-                      submission?.status === "submitted" ||
-                      submission?.status === "graded";
+        {/* Assigned Activities Section */}
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Target className="h-5 w-5" />
+              {allAssignedActivities.length > 0
+                ? "Assigned Activities"
+                : "My Activities"}
+            </CardTitle>
+            <CardDescription>
+              {allAssignedActivities.length > 0
+                ? "All activities from your enrolled courses"
+                : "You don't have any activities yet."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {allAssignedActivities.length > 0 ? (
+              <div className="space-y-4">
+                {allAssignedActivities
+                  .filter((activity) => {
+                    return true;
+                  })
+                  .slice(0, 20)
+                  .map((activity) => {
+                    const progress = activity.progress;
+                    const isCompleted = progress?.status === "completed";
+                    const isInProgress = progress?.status === "in_progress";
 
                     return (
                       <div
-                        key={assignment.id}
-                        className="flex items-start gap-3 p-3 bg-muted rounded-lg"
+                        key={activity.id}
+                        className="p-4 border rounded-lg hover:bg-muted/50 transition-colors"
                       >
-                        <FileText className="h-4 w-4 mt-0.5 text-blue-500" />
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-medium text-sm">
-                              {assignment.title}
-                            </h4>
-                            {isOverdue && !isSubmitted && (
-                              <Badge variant="destructive" className="text-xs">
-                                Overdue
-                              </Badge>
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <h4 className="font-medium">{activity.title}</h4>
+                              {isCompleted && (
+                                <CheckCircle className="h-4 w-4 text-green-600" />
+                              )}
+                              {isInProgress && (
+                                <div className="h-4 w-4 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
+                              )}
+                            </div>
+                            {activity.description && (
+                              <p className="text-sm text-muted-foreground line-clamp-2">
+                                {activity.description}
+                              </p>
                             )}
-                            {isSubmitted && (
-                              <Badge variant="secondary" className="text-xs">
-                                Submitted
-                              </Badge>
-                            )}
+                            <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                              {activity.course_title && (
+                                <span>{activity.course_title}</span>
+                              )}
+                              {activity.lesson_title && (
+                                <span>• {activity.lesson_title}</span>
+                              )}
+                              {activity.estimated_duration && (
+                                <span className="flex items-center gap-1">
+                                  <Clock className="h-3 w-3" />
+                                  {activity.estimated_duration} min
+                                </span>
+                              )}
+                              {activity.points > 0 && (
+                                <Badge variant="secondary" className="text-xs">
+                                  {activity.points} pts
+                                </Badge>
+                              )}
+                              {progress?.score && (
+                                <Badge
+                                  variant="outline"
+                                  className="text-green-600"
+                                >
+                                  Score: {progress.score}%
+                                </Badge>
+                              )}
+                            </div>
                           </div>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            {assignment.courses.title} -{" "}
-                            {assignment.courses.subject}
-                          </p>
-                          {assignment.due_date && (
-                            <p className="text-xs text-muted-foreground">
-                              Due:{" "}
-                              {new Date(
-                                assignment.due_date
-                              ).toLocaleDateString()}
-                            </p>
-                          )}
-                          {submission?.grade && (
-                            <p className="text-xs text-green-600 font-medium">
-                              Grade: {submission.grade}%
-                            </p>
-                          )}
+                          <Button
+                            size="sm"
+                            variant={isCompleted ? "outline" : "default"}
+                            asChild
+                          >
+                            <Link href={`/learn/activities/${activity.id}`}>
+                              {isCompleted ? "Review" : "Start"}
+                              <Play className="h-4 w-4 ml-2" />
+                            </Link>
+                          </Button>
                         </div>
+                        {isInProgress && progress && (
+                          <div className="mt-3">
+                            <Progress value={50} className="h-1" />
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {progress.attempts || 0} attempts
+                            </p>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
-                  {assignments.length > 5 && (
-                    <Button variant="outline" size="sm" className="w-full">
-                      View All Assignments
+                {allAssignedActivities.length > 20 && (
+                  <div className="text-center pt-4">
+                    <Button variant="outline" asChild>
+                      <Link href="/learn/courses">
+                        View All Activities ({allAssignedActivities.length})
+                      </Link>
                     </Button>
-                  )}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  No assignments yet
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <Target className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <p className="text-muted-foreground">
+                  No activities available.
                 </p>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Lesson Assignments */}
         {lessonAssignments && lessonAssignments.length > 0 && (
@@ -374,16 +549,9 @@ export default async function StudentLearnPage() {
           </Card>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 gap-8">
           {/* My Courses */}
           <div className="lg:col-span-2">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-semibold">My Courses</h2>
-              <Button variant="outline" asChild>
-                <Link href="/learn/browse">Browse More</Link>
-              </Button>
-            </div>
-
             {enrollments && enrollments.length > 0 ? (
               <div className="space-y-4">
                 {enrollments.map((enrollment) => (
@@ -409,28 +577,6 @@ export default async function StudentLearnPage() {
                             {enrollment.courses?.description}
                           </p>
                         </div>
-                        <Button asChild>
-                          <Link href={`/learn/courses/${enrollment.course_id}`}>
-                            <Play className="h-4 w-4 mr-2" />
-                            Continue
-                          </Link>
-                        </Button>
-                      </div>
-
-                      {/* Progress Bar */}
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">
-                            Progress
-                          </span>
-                          <span className="font-medium">
-                            {enrollment.progress_percentage}%
-                          </span>
-                        </div>
-                        <Progress
-                          value={enrollment.progress_percentage}
-                          className="h-2"
-                        />
                       </div>
 
                       {/* Course Stats */}
@@ -462,112 +608,18 @@ export default async function StudentLearnPage() {
                   <BookOpen className="h-12 w-12 text-muted-foreground mb-4" />
                   <h3 className="text-lg font-semibold mb-2">No courses yet</h3>
                   <p className="text-muted-foreground text-center mb-4">
-                    Start your learning journey by enrolling in your first
-                    course.
+                    Start your learning journey by joining a course with a join
+                    code
                   </p>
-                  <Button asChild>
-                    <Link href="/learn/browse">Browse Courses</Link>
+                  <Button asChild size="lg" className="shadow-md">
+                    <Link href="/learn/join">
+                      <Users className="h-4 w-4 mr-2" />
+                      Join Course
+                    </Link>
                   </Button>
                 </CardContent>
               </Card>
             )}
-          </div>
-
-          {/* Sidebar */}
-          <div className="space-y-6">
-            {/* Recent Activity */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Recent Activity</CardTitle>
-                <CardDescription>Your latest learning progress</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {recentProgress && recentProgress.length > 0 ? (
-                  <div className="space-y-4">
-                    {recentProgress.slice(0, 5).map((progress) => (
-                      <div key={progress.id} className="flex items-start gap-3">
-                        <div
-                          className={`p-1 rounded-full ${
-                            progress.status === "completed"
-                              ? "bg-green-100 text-green-600"
-                              : progress.status === "in_progress"
-                              ? "bg-blue-100 text-blue-600"
-                              : "bg-gray-100 text-gray-600"
-                          }`}
-                        >
-                          {progress.status === "completed" ? (
-                            <CheckCircle className="h-3 w-3" />
-                          ) : (
-                            <Play className="h-3 w-3" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium line-clamp-1">
-                            {progress.activities?.title}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {progress.courses?.title}
-                          </p>
-                          <div className="flex items-center gap-2 mt-1">
-                            <Badge variant="outline" className="text-xs">
-                              {progress.activities?.activity_type}
-                            </Badge>
-                            {progress.score && (
-                              <span className="text-xs text-muted-foreground">
-                                {progress.score}%
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    No recent activity
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Quick Actions */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Quick Actions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Button
-                  className="w-full justify-start bg-transparent"
-                  variant="outline"
-                  asChild
-                >
-                  <Link href="/learn/browse">
-                    <BookOpen className="h-4 w-4 mr-2" />
-                    Browse Courses
-                  </Link>
-                </Button>
-                <Button
-                  className="w-full justify-start bg-transparent"
-                  variant="outline"
-                  asChild
-                >
-                  <Link href="/learn/progress">
-                    <Trophy className="h-4 w-4 mr-2" />
-                    View Progress
-                  </Link>
-                </Button>
-                <Button
-                  className="w-full justify-start bg-transparent"
-                  variant="outline"
-                  asChild
-                >
-                  <Link href="/learn/achievements">
-                    <Target className="h-4 w-4 mr-2" />
-                    Achievements
-                  </Link>
-                </Button>
-              </CardContent>
-            </Card>
           </div>
         </div>
       </div>

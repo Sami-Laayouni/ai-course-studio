@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import SimpleActivityPlayer from "@/components/learning/simple-activity-player";
 import AgenticActivityPlayer from "@/components/learning/agentic-activity-player";
+import EnhancedActivityPlayer from "@/components/learning/enhanced-activity-player";
 import {
   Card,
   CardContent,
@@ -348,6 +349,11 @@ export default function ActivityPage({ params }: { params: { id: string } }) {
     );
   }
 
+  // Check if activity has node-based structure (from Zapier builder)
+  const hasNodes = activity?.content?.nodes && Array.isArray(activity.content.nodes) && activity.content.nodes.length > 0;
+  const isEnhancedWorkflow = activity?.activity_type === "enhanced_workflow" || activity?.type === "enhanced_workflow";
+  
+  // Check if it's an agentic activity
   const isAgentic =
     activity?.activity_type === "custom" ||
     activity?.content?.mode ||
@@ -355,12 +361,28 @@ export default function ActivityPage({ params }: { params: { id: string } }) {
     activity?.content?.steps ||
     activity?.content?.prompts;
 
-  return isAgentic ? (
-    <AgenticActivityPlayer
-      activity={activity}
-      onComplete={handleActivityComplete}
-    />
-  ) : (
+  // Use EnhancedActivityPlayer for node-based activities
+  if (hasNodes || isEnhancedWorkflow) {
+    return (
+      <EnhancedActivityPlayer
+        activity={activity}
+        onComplete={handleActivityComplete}
+      />
+    );
+  }
+
+  // Use AgenticActivityPlayer for agentic activities
+  if (isAgentic) {
+    return (
+      <AgenticActivityPlayer
+        activity={activity}
+        onComplete={handleActivityComplete}
+      />
+    );
+  }
+
+  // Default to SimpleActivityPlayer
+  return (
     <SimpleActivityPlayer
       activity={activity}
       onComplete={handleActivityComplete}

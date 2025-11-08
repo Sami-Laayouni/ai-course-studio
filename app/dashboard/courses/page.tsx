@@ -1,29 +1,37 @@
-import { redirect } from "next/navigation"
-import { createClient } from "@/lib/supabase/server"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Plus, Search, BookOpen, Users, Calendar } from "lucide-react"
-import Link from "next/link"
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Plus, Search, BookOpen, Users, Calendar } from "lucide-react";
+import Link from "next/link";
 
 export default async function CoursesPage() {
-  const supabase = await createClient()
+  const supabase = await createClient();
 
-  const { data, error } = await supabase.auth.getUser()
+  const { data, error } = await supabase.auth.getUser();
   if (error || !data?.user) {
-    redirect("/auth/login")
+    redirect("/auth/login");
   }
 
   // Get all user's courses with enrollment counts
   const { data: courses } = await supabase
     .from("courses")
-    .select(`
+    .select(
+      `
       *,
       activities(count),
       enrollments(count)
-    `)
+    `
+    )
     .eq("teacher_id", data.user.id)
-    .order("created_at", { ascending: false })
+    .order("created_at", { ascending: false });
 
   return (
     <div className="min-h-screen bg-background">
@@ -32,7 +40,9 @@ export default async function CoursesPage() {
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
           <div>
             <h1 className="text-3xl font-bold text-foreground">My Courses</h1>
-            <p className="text-muted-foreground mt-1">Create and manage your educational content</p>
+            <p className="text-muted-foreground mt-1">
+              Create and manage your educational content
+            </p>
           </div>
           <Button asChild>
             <Link href="/dashboard/courses/new">
@@ -54,11 +64,16 @@ export default async function CoursesPage() {
         {courses && courses.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {courses.map((course) => (
-              <Card key={course.id} className="hover:shadow-lg transition-shadow">
+              <Card
+                key={course.id}
+                className="hover:shadow-lg transition-shadow"
+              >
                 <CardHeader>
                   <div className="flex items-start justify-between">
                     <div className="flex-1">
-                      <CardTitle className="text-lg line-clamp-2">{course.title}</CardTitle>
+                      <CardTitle className="text-lg line-clamp-2">
+                        {course.title}
+                      </CardTitle>
                       <CardDescription className="mt-1">
                         {course.subject} • {course.grade_level}
                       </CardDescription>
@@ -85,37 +100,62 @@ export default async function CoursesPage() {
                   <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
                     <div className="flex items-center gap-1">
                       <BookOpen className="h-4 w-4" />
-                      <span>{course.activities?.[0]?.count || 0} activities</span>
+                      <span>
+                        {course.activities?.[0]?.count || 0} activities
+                      </span>
                     </div>
                     <div className="flex items-center gap-1">
                       <Users className="h-4 w-4" />
-                      <span>{course.enrollments?.[0]?.count || 0} students</span>
+                      <span>
+                        {course.enrollments?.[0]?.count || 0} students
+                      </span>
                     </div>
                   </div>
 
                   {/* Learning Objectives Preview */}
-                  {course.learning_objectives && course.learning_objectives.length > 0 && (
-                    <div className="mb-4">
-                      <p className="text-xs font-medium text-muted-foreground mb-1">Learning Objectives:</p>
-                      <ul className="text-xs text-muted-foreground">
-                        {course.learning_objectives.slice(0, 2).map((objective, index) => (
-                          <li key={index} className="line-clamp-1">
-                            • {objective}
-                          </li>
-                        ))}
-                        {course.learning_objectives.length > 2 && (
-                          <li className="text-muted-foreground/70">+ {course.learning_objectives.length - 2} more</li>
-                        )}
-                      </ul>
-                    </div>
-                  )}
+                  {course.learning_objectives &&
+                    course.learning_objectives.length > 0 && (
+                      <div className="mb-4">
+                        <p className="text-xs font-medium text-muted-foreground mb-1">
+                          Learning Objectives:
+                        </p>
+                        <ul className="text-xs text-muted-foreground">
+                          {course.learning_objectives
+                            .slice(0, 2)
+                            .map((objective, index) => (
+                              <li key={index} className="line-clamp-1">
+                                • {objective}
+                              </li>
+                            ))}
+                          {course.learning_objectives.length > 2 && (
+                            <li className="text-muted-foreground/70">
+                              + {course.learning_objectives.length - 2} more
+                            </li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
 
                   {/* Actions */}
                   <div className="flex items-center gap-2">
-                    <Button variant="outline" size="sm" className="flex-1 bg-transparent" asChild>
-                      <Link href={`/dashboard/courses/${course.id}/activities/new`}>Edit Course</Link>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 bg-transparent"
+                      asChild
+                    >
+                      <Link
+                        href={`/dashboard/courses/${course.id}/activities/new`}
+                      >
+                        Edit Course
+                      </Link>
                     </Button>
-                    <Button variant="outline" size="sm" className="flex-1 bg-transparent" asChild>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="flex-1 bg-transparent"
+                      asChild
+                    >
                       <Link href={`/dashboard/courses/${course.id}`}>View</Link>
                     </Button>
                   </div>
@@ -123,7 +163,9 @@ export default async function CoursesPage() {
                   {/* Created Date */}
                   <div className="flex items-center gap-1 text-xs text-muted-foreground mt-3">
                     <Calendar className="h-3 w-3" />
-                    <span>Created {new Date(course.created_at).toLocaleDateString()}</span>
+                    <span>
+                      Created {new Date(course.created_at).toLocaleDateString()}
+                    </span>
                   </div>
                 </CardContent>
               </Card>
@@ -135,7 +177,8 @@ export default async function CoursesPage() {
               <BookOpen className="h-16 w-16 text-muted-foreground mb-4" />
               <h3 className="text-xl font-semibold mb-2">No courses yet</h3>
               <p className="text-muted-foreground text-center mb-6 max-w-md">
-                Start creating engaging educational content with AI assistance. Build your first course to get started.
+                Start creating engaging educational content with AI assistance.
+                Build your first course to get started.
               </p>
               <Button asChild size="lg">
                 <Link href="/dashboard/courses/new">
@@ -148,5 +191,5 @@ export default async function CoursesPage() {
         )}
       </div>
     </div>
-  )
+  );
 }

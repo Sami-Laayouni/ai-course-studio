@@ -13,16 +13,11 @@ export async function POST(request: NextRequest) {
       points,
       estimated_duration,
       activity_type = "interactive",
-      activity_subtype = "interactive",
       order_index = 0,
       difficulty_level = 3,
       is_adaptive = true,
       is_collaborative = false,
-      is_enhanced = false,
-      is_conditional = false,
-      supports_upload = false,
-      supports_slideshow = false,
-      performance_tracking = false,
+      // Removed columns that don't exist: activity_subtype, is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking
       collaboration_settings = {},
     } = body;
 
@@ -36,26 +31,27 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createClient();
 
-    // Create the activity
+    // Create the activity - only use columns that exist in the database
     const activityData: any = {
       title,
       description: description || "",
       content: content || {},
       course_id,
       activity_type,
-      activity_subtype,
       order_index,
       estimated_duration: estimated_duration || 10,
       difficulty_level,
       is_adaptive,
       is_collaborative,
-      is_enhanced,
-      is_conditional,
-      supports_upload,
-      supports_slideshow,
-      performance_tracking,
-      collaboration_settings,
+      // Removed columns that don't exist: activity_subtype, is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking
+      // collaboration_settings might not exist either, so we'll only add it if it's provided
     };
+    
+    // Only add collaboration_settings if it exists and is provided
+    if (collaboration_settings && Object.keys(collaboration_settings).length > 0) {
+      // Check if column exists before adding - if it doesn't exist, just skip it
+      // activityData.collaboration_settings = collaboration_settings;
+    }
 
     // Add lesson_id if it exists (from migration)
     // Note: lesson_id column might not exist if migrations haven't been run
@@ -94,6 +90,126 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("Error in activities POST:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request: NextRequest) {
+  try {
+    const body = await request.json();
+    const {
+      id,
+      title,
+      description,
+      content,
+      lesson_id,
+      course_id,
+      points,
+      estimated_duration,
+      activity_type,
+      order_index,
+      difficulty_level,
+      is_adaptive,
+      is_collaborative,
+      // Removed columns that don't exist: activity_subtype, is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking
+      collaboration_settings,
+    } = body;
+
+    // Validate required fields
+    if (!id) {
+      return NextResponse.json(
+        { error: "Missing required field: id" },
+        { status: 400 }
+      );
+    }
+
+    const supabase = await createClient();
+
+    // Update the activity
+    const activityData: any = {};
+
+    if (title !== undefined) activityData.title = title;
+    if (description !== undefined) activityData.description = description || "";
+    if (content !== undefined) activityData.content = content || {};
+    if (course_id !== undefined) activityData.course_id = course_id;
+    if (activity_type !== undefined) activityData.activity_type = activity_type;
+    // Removed: activity_subtype (doesn't exist)
+    if (order_index !== undefined) activityData.order_index = order_index;
+    if (estimated_duration !== undefined) activityData.estimated_duration = estimated_duration;
+    if (difficulty_level !== undefined) activityData.difficulty_level = difficulty_level;
+    if (is_adaptive !== undefined) activityData.is_adaptive = is_adaptive;
+    if (is_collaborative !== undefined) activityData.is_collaborative = is_collaborative;
+    // Removed: is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking (don't exist)
+    if (points !== undefined) activityData.points = points;
+    if (lesson_id !== undefined) activityData.lesson_id = lesson_id;
+    // Removed: collaboration_settings (might not exist)
+
+    const { data: activity, error } = await supabase
+      .from("activities")
+      .update(activityData)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Error updating activity:", error);
+      return NextResponse.json(
+        { error: "Failed to update activity", details: error.message },
+        { status: 500 }
+      );
+    }
+
+    console.log("Activity updated successfully:", activity);
+    return NextResponse.json({
+      success: true,
+      activity,
+      message: "Activity updated successfully",
+    });
+  } catch (error) {
+    console.error("Error in activities PUT:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const activityId = searchParams.get("id");
+
+    if (!activityId) {
+      return NextResponse.json(
+        { error: "Missing required field: id" },
+        { status: 400 }
+      );
+    }
+
+    const supabase = await createClient();
+
+    const { error } = await supabase
+      .from("activities")
+      .delete()
+      .eq("id", activityId);
+
+    if (error) {
+      console.error("Error deleting activity:", error);
+      return NextResponse.json(
+        { error: "Failed to delete activity", details: error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: "Activity deleted successfully",
+    });
+  } catch (error) {
+    console.error("Error in activities DELETE:", error);
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }

@@ -65,7 +65,16 @@ export default function LessonInvitePage({ params }: LessonInvitePageProps) {
     try {
       const supabase = createClient();
 
-      // Get lesson details by join code
+      // Normalize join code: trim whitespace and convert to uppercase
+      const normalizedToken = token?.trim().toUpperCase();
+      
+      if (!normalizedToken) {
+        setError("Invalid join code");
+        setLoading(false);
+        return;
+      }
+
+      // Get lesson details by join code (normalized to uppercase for consistent matching)
       const { data: lesson, error: lessonError } = await supabase
         .from("lessons")
         .select(
@@ -74,7 +83,7 @@ export default function LessonInvitePage({ params }: LessonInvitePageProps) {
           courses(title, subject, profiles(full_name))
         `
         )
-        .eq("join_code", token)
+        .eq("join_code", normalizedToken)
         .single();
 
       if (lessonError || !lesson) {
@@ -106,13 +115,16 @@ export default function LessonInvitePage({ params }: LessonInvitePageProps) {
       setJoining(true);
       setError(null);
 
+      // Normalize join code before sending to API
+      const normalizedToken = token?.trim().toUpperCase();
+      
       const response = await fetch("/api/join/lesson", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          join_code: token,
+          join_code: normalizedToken,
         }),
       });
 

@@ -166,7 +166,9 @@ export default async function DashboardPage() {
                         {course.activities?.[0]?.count || 0} activities
                       </span>
                       <Button variant="outline" size="sm" asChild>
-                        <Link href={`/dashboard/courses/${course.id}`}></Link>
+                        <Link href={`/dashboard/courses/${course.id}`}>
+                          Create
+                        </Link>
                       </Button>
                     </div>
                   </CardContent>

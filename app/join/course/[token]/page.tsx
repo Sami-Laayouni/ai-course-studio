@@ -63,7 +63,16 @@ export default function CourseInvitePage({ params }: CourseInvitePageProps) {
     try {
       const supabase = createClient();
 
-      // Get course details by join code
+      // Normalize join code: trim whitespace and convert to uppercase
+      const normalizedToken = token?.trim().toUpperCase();
+      
+      if (!normalizedToken) {
+        setError("Invalid join code");
+        setLoading(false);
+        return;
+      }
+
+      // Get course details by join code (normalized to uppercase for consistent matching)
       const { data: course, error: courseError } = await supabase
         .from("courses")
         .select(
@@ -72,7 +81,7 @@ export default function CourseInvitePage({ params }: CourseInvitePageProps) {
           profiles(full_name)
         `
         )
-        .eq("join_code", token)
+        .eq("join_code", normalizedToken)
         .single();
 
       if (courseError || !course) {
@@ -102,13 +111,16 @@ export default function CourseInvitePage({ params }: CourseInvitePageProps) {
       setJoining(true);
       setError(null);
 
+      // Normalize join code before sending to API
+      const normalizedToken = token?.trim().toUpperCase();
+      
       const response = await fetch("/api/join/course", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          join_code: token,
+          join_code: normalizedToken,
         }),
       });
 

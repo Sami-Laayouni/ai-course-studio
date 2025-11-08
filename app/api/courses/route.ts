@@ -27,22 +27,82 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Insert course - don't include join_code, let database trigger handle it if column exists
-    // This prevents errors if the join_code column doesn't exist in the schema
-    const { data: course, error: insertError } = await supabase
+    // Generate a random 6-character join code
+    const generateJoinCode = (): string => {
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+      let code = "";
+      for (let i = 0; i < 6; i++) {
+        code += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return code;
+    };
+
+    // Generate unique join code (only check uniqueness if column exists)
+    let joinCode = generateJoinCode();
+    let attempts = 0;
+    const maxAttempts = 10;
+
+    // Check if code already exists and regenerate if needed
+    // This will fail silently if join_code column doesn't exist, which is fine
+    try {
+      while (attempts < maxAttempts) {
+        const { data: existingCourse, error: checkError } = await supabase
+          .from("courses")
+          .select("id")
+          .eq("join_code", joinCode)
+          .single();
+
+        // If column doesn't exist, skip uniqueness check
+        if (checkError && checkError.message?.includes("join_code")) {
+          break;
+        }
+
+        if (!existingCourse) {
+          break; // Code is unique
+        }
+
+        joinCode = generateJoinCode();
+        attempts++;
+      }
+    } catch (error) {
+      // If join_code column doesn't exist, just use the generated code
+      console.log("Could not check join_code uniqueness, column may not exist");
+    }
+
+    // Insert course - try with join_code first, fallback without it if column doesn't exist
+    let courseData: any = {
+      title,
+      description: description || null,
+      subject,
+      grade_level,
+      learning_objectives: learning_objectives || [],
+      teacher_id: user.id,
+      is_published: false,
+    };
+
+    // Only add join_code if the column exists (check by trying to insert with it)
+    // If it fails, we'll retry without it
+    let { data: course, error: insertError } = await supabase
       .from("courses")
       .insert({
-        title,
-        description: description || null,
-        subject,
-        grade_level,
-        learning_objectives: learning_objectives || [],
-        teacher_id: user.id,
-        is_published: false,
-        // Note: join_code is intentionally omitted - database trigger will generate it if column exists
+        ...courseData,
+        join_code: joinCode, // Auto-generated join code
       })
       .select()
       .single();
+
+    // If join_code column doesn't exist, insert without it
+    if (insertError && insertError.message?.includes("join_code")) {
+      console.log("join_code column not found, inserting without it");
+      const { data: courseWithoutCode, error: insertErrorWithoutCode } = await supabase
+        .from("courses")
+        .insert(courseData)
+        .select()
+        .single();
+      
+      course = courseWithoutCode;
+      insertError = insertErrorWithoutCode;
+    }
 
     if (insertError) {
       console.error("Course creation error:", insertError);

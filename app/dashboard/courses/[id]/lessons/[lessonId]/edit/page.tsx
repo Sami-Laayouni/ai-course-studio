@@ -56,6 +56,38 @@ export default function LessonEditPage({ params }: LessonEditPageProps) {
   const [showActivityBuilder, setShowActivityBuilder] = useState(false);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
+  const handleDeleteActivity = async (activityId: string) => {
+    if (!confirm("Are you sure you want to delete this activity? This action cannot be undone.")) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/activities?id=${activityId}`, {
+        method: "DELETE",
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete activity");
+      }
+
+      // Remove activity from state
+      setActivities(activities.filter((a) => a.id !== activityId));
+      
+      // Reload lesson data to ensure consistency
+      if (lessonId && courseId) {
+        loadLessonFromDatabase(lessonId, courseId);
+      }
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Failed to delete activity";
+      setError(errorMessage);
+      console.error("Error deleting activity:", error);
+      alert(errorMessage);
+    }
+  };
+
   const router = useRouter();
 
   // Initialize IDs from params
@@ -374,6 +406,8 @@ export default function LessonEditPage({ params }: LessonEditPageProps) {
         onClose={() => setShowActivityBuilder(false)}
         courseId={courseId}
         lessonId={lessonId}
+        title="New Activity" // Default title if not provided
+        description="" // Empty description
       />
     );
   }
@@ -559,6 +593,15 @@ export default function LessonEditPage({ params }: LessonEditPageProps) {
                           >
                             <ExternalLink className="h-4 w-4 mr-1" />
                             Open
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDeleteActivity(activity.id)}
+                            className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          >
+                            <Trash2 className="h-4 w-4 mr-1" />
+                            Delete
                           </Button>
                         </div>
                       </div>
