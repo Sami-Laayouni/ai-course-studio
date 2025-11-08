@@ -166,9 +166,7 @@ export default async function DashboardPage() {
                         {course.activities?.[0]?.count || 0} activities
                       </span>
                       <Button variant="outline" size="sm" asChild>
-                        <Link href={`/dashboard/courses/${course.id}`}>
-                          Edit
-                        </Link>
+                        <Link href={`/dashboard/courses/${course.id}`}></Link>
                       </Button>
                     </div>
                   </CardContent>
@@ -176,17 +174,23 @@ export default async function DashboardPage() {
               ))}
             </div>
           ) : (
-            <Card>
-              <CardContent className="flex flex-col items-center justify-center py-12">
-                <BookOpen className="h-12 w-12 text-muted-foreground mb-4" />
-                <h3 className="text-lg font-semibold mb-2">No courses yet</h3>
-                <p className="text-muted-foreground text-center mb-4">
+            <Card className="border-2 border-dashed">
+              <CardContent className="flex flex-col items-center justify-center py-16">
+                <div className="h-20 w-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+                  <BookOpen className="h-10 w-10 text-primary" />
+                </div>
+                <h3 className="text-2xl font-semibold mb-3">Get Started</h3>
+                <p className="text-muted-foreground text-center mb-2 max-w-md">
                   Create your first course to start building amazing learning
-                  experiences with AI assistance.
+                  experiences.
                 </p>
-                <Button asChild>
+                <p className="text-sm text-muted-foreground text-center mb-8 max-w-md">
+                  <strong>Quick Flow:</strong> Create Course → Add Lessons →
+                  Build Activities
+                </p>
+                <Button asChild size="lg" className="shadow-md">
                   <Link href="/dashboard/courses/new">
-                    <Plus className="h-4 w-4 mr-2" />
+                    <Plus className="h-5 w-5 mr-2" />
                     Create Your First Course
                   </Link>
                 </Button>

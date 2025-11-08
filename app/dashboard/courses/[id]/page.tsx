@@ -36,9 +36,10 @@ interface CoursePageProps {
 export default function CoursePage({ params }: CoursePageProps) {
   const [courseId, setCourseId] = useState<string>("");
   const [course, setCourse] = useState<any>(null);
-  const [lessons, setLessons] = useState<any[]>([]);
+  const [activities, setActivities] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showSuccessBanner, setShowSuccessBanner] = useState(false);
 
   const router = useRouter();
 
@@ -47,15 +48,25 @@ export default function CoursePage({ params }: CoursePageProps) {
       const resolvedParams = await params;
       setCourseId(resolvedParams.id);
       fetchCourseData(resolvedParams.id);
+      
+      // Check if course was just created
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get('created') === 'true') {
+        setShowSuccessBanner(true);
+        // Remove query param from URL
+        window.history.replaceState({}, '', window.location.pathname);
+        // Hide banner after 5 seconds
+        setTimeout(() => setShowSuccessBanner(false), 5000);
+      }
     };
     initializeParams();
   }, [params]);
 
   const fetchCourseData = async (id: string) => {
     try {
-      const [courseResponse, lessonsResponse] = await Promise.all([
+      const [courseResponse, activitiesResponse] = await Promise.all([
         fetch(`/api/courses/${id}`),
-        fetch(`/api/lessons?course_id=${id}`),
+        fetch(`/api/activities?course_id=${id}`),
       ]);
 
       if (courseResponse.ok) {
@@ -63,9 +74,9 @@ export default function CoursePage({ params }: CoursePageProps) {
         setCourse(courseData.course);
       }
 
-      if (lessonsResponse.ok) {
-        const lessonsData = await lessonsResponse.json();
-        setLessons(lessonsData.lessons || []);
+      if (activitiesResponse.ok) {
+        const activitiesData = await activitiesResponse.json();
+        setActivities(activitiesData.activities || []);
       }
     } catch (error) {
       setError("Failed to load course data");
@@ -106,6 +117,36 @@ export default function CoursePage({ params }: CoursePageProps) {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8">
+        {/* Success Banner */}
+        {showSuccessBanner && (
+          <Card className="mb-6 border-green-500 bg-green-50 dark:bg-green-950">
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 rounded-full bg-green-500 flex items-center justify-center">
+                    <Plus className="h-5 w-5 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold text-green-900 dark:text-green-100">
+                      Course created successfully! 🎉
+                    </h3>
+                    <p className="text-sm text-green-700 dark:text-green-300">
+                      Now create your first activity to get started.
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowSuccessBanner(false)}
+                >
+                  ✕
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
@@ -121,13 +162,15 @@ export default function CoursePage({ params }: CoursePageProps) {
             </div>
           </div>
           <div className="flex gap-2">
+            <Button variant="outline" asChild>
+              <Link href={`/dashboard/courses/${courseId}/activities/new`}>
+                <Edit className="h-4 w-4 mr-2" />
+                Edit Course
+              </Link>
+            </Button>
             <Button variant="outline">
               <Eye className="h-4 w-4 mr-2" />
               Preview
-            </Button>
-            <Button variant="outline">
-              <Settings className="h-4 w-4 mr-2" />
-              Settings
             </Button>
           </div>
         </div>
@@ -135,64 +178,75 @@ export default function CoursePage({ params }: CoursePageProps) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Main Content */}
           <div className="lg:col-span-2">
-            <Tabs defaultValue="lessons" className="space-y-6">
+            <Tabs defaultValue="activities" className="space-y-6">
               <TabsList>
-                <TabsTrigger value="lessons">Lessons</TabsTrigger>
+                <TabsTrigger value="activities">Activities</TabsTrigger>
                 <TabsTrigger value="students">Students</TabsTrigger>
                 <TabsTrigger value="analytics">Analytics</TabsTrigger>
               </TabsList>
 
-              <TabsContent value="lessons" className="space-y-6">
+              <TabsContent value="activities" className="space-y-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-semibold">Lessons</h2>
-                  <Button asChild>
-                    <Link href={`/dashboard/courses/${courseId}/lessons/new`}>
+                  <div>
+                    <h2 className="text-xl font-semibold">Activities</h2>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Build your course with interactive activities
+                    </p>
+                  </div>
+                  <Button asChild size="lg" className="shadow-md">
+                    <Link href={`/dashboard/courses/${courseId}/activities/new`}>
                       <Plus className="h-4 w-4 mr-2" />
-                      New Lesson
+                      Create Activity
                     </Link>
                   </Button>
                 </div>
 
                 <div className="space-y-4">
-                  {lessons.length === 0 ? (
-                    <Card className="p-8 text-center">
-                      <BookOpen className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold mb-2">
-                        No lessons yet
-                      </h3>
-                      <p className="text-muted-foreground mb-4">
-                        Create your first lesson to get started
-                      </p>
-                      <Button asChild>
-                        <Link
-                          href={`/dashboard/courses/${courseId}/lessons/new`}
-                        >
-                          Create Lesson
-                        </Link>
-                      </Button>
+                  {activities.length === 0 ? (
+                    <Card className="p-12 text-center border-2 border-dashed">
+                      <div className="max-w-md mx-auto">
+                        <div className="h-16 w-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <BookOpen className="h-8 w-8 text-primary" />
+                        </div>
+                        <h3 className="text-xl font-semibold mb-2">
+                          Start Building Your Course
+                        </h3>
+                        <p className="text-muted-foreground mb-6">
+                          Create your first activity to add quizzes, interactive content, and learning experiences. 
+                          You can use AI to help generate engaging activities.
+                        </p>
+                        <Button asChild size="lg" className="shadow-md">
+                          <Link
+                            href={`/dashboard/courses/${courseId}/activities/new`}
+                          >
+                            <Plus className="h-4 w-4 mr-2" />
+                            Create Your First Activity
+                          </Link>
+                        </Button>
+                      </div>
                     </Card>
                   ) : (
-                    lessons.map((lesson) => (
-                      <Card key={lesson.id} className="p-4">
+                    activities.map((activity) => (
+                      <Card key={activity.id} className="p-4">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-3">
                             <div className="p-2 bg-primary/10 rounded-lg">
                               <BookOpen className="h-5 w-5 text-primary" />
                             </div>
                             <div>
-                              <h3 className="font-semibold">{lesson.title}</h3>
+                              <h3 className="font-semibold">{activity.title}</h3>
                               <p className="text-sm text-muted-foreground">
-                                {lesson.description}
+                                {activity.description}
                               </p>
                               <div className="flex items-center gap-4 mt-2">
-                                {lesson.estimated_duration && (
+                                {activity.estimated_duration && (
                                   <div className="flex items-center gap-1 text-sm text-muted-foreground">
                                     <Clock className="h-3 w-3" />
-                                    {lesson.estimated_duration} min
+                                    {activity.estimated_duration} min
                                   </div>
                                 )}
                                 <Badge variant="secondary">
-                                  {lesson.is_published ? "Published" : "Draft"}
+                                  {activity.activity_type || "Activity"}
                                 </Badge>
                               </div>
                             </div>
@@ -200,7 +254,7 @@ export default function CoursePage({ params }: CoursePageProps) {
                           <div className="flex gap-2">
                             <Button variant="outline" size="sm" asChild>
                               <Link
-                                href={`/dashboard/courses/${courseId}/lessons/${lesson.id}/edit`}
+                                href={`/dashboard/courses/${courseId}/activities/new?id=${activity.id}`}
                               >
                                 <Edit className="h-4 w-4 mr-1" />
                                 Edit

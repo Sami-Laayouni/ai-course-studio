@@ -7,18 +7,16 @@ export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerClient();
 
-    // Check authentication
+    // Authentication is OPTIONAL for student-side play
+    // If no user, we continue in anonymous mode and skip DB writes that require a user
     const {
       data: { user },
-      error: authError,
     } = await supabase.auth.getUser();
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
 
     // Parse request body
     const body = await request.json();
     const {
+      // Original structured payload (teacher/assignment flow)
       activity_id,
       session_id,
       message,
@@ -27,35 +25,44 @@ export async function POST(request: NextRequest) {
       concepts_mastered,
       concepts_struggling,
       context_sources,
-    } = body;
 
-    // Get activity details for context
-    const { data: activity, error: activityError } = await supabase
-      .from("activities")
-      .select(
+      // Flexible payload from EnhancedActivityPlayer
+      context, // alias for context_sources
+      nodeConfig,
+      performanceHistory,
+    } = body || {};
+
+    // Try to fetch activity for richer context, if provided
+    let activity: any = null;
+    if (activity_id) {
+      const { data: a, error: activityError } = await supabase
+        .from("activities")
+        .select(
+          `
+          *,
+          courses(title, subject, grade_level),
+          lessons(title, learning_objectives)
         `
-        *,
-        courses(title, subject, grade_level),
-        lessons(title, learning_objectives)
-      `
-      )
-      .eq("id", activity_id)
-      .single();
-
-    if (activityError || !activity) {
-      return NextResponse.json(
-        { error: "Activity not found" },
-        { status: 404 }
-      );
+        )
+        .eq("id", activity_id)
+        .single();
+      if (!activityError && a) activity = a;
     }
 
     // Build context for AI with additional sources
     let contextSources = "";
-    if (context_sources && context_sources.length > 0) {
+    const mergedContextSources = Array.isArray(context_sources)
+      ? context_sources
+      : Array.isArray(context)
+      ? context
+      : [];
+    if (mergedContextSources && mergedContextSources.length > 0) {
       contextSources = "\n\nAdditional Context Sources:\n";
-      for (const source of context_sources) {
+      for (const source of mergedContextSources) {
         if (source.type === "pdf") {
-          contextSources += `- PDF Document: ${source.title || source.filename}\n`;
+          contextSources += `- PDF Document: ${
+            source.title || source.filename
+          }\n`;
           if (source.summary) {
             contextSources += `  Summary: ${source.summary}\n`;
           }
@@ -71,24 +78,41 @@ export async function POST(request: NextRequest) {
             contextSources += `  Summary: ${source.summary}\n`;
           }
           if (source.key_concepts) {
-            contextSources += `  Key Concepts: ${source.key_concepts.join(", ")}\n`;
+            contextSources += `  Key Concepts: ${source.key_concepts.join(
+              ", "
+            )}\n`;
           }
         }
       }
     }
 
-    const context = `You are an AI tutor helping a student with "${
-      activity.title
-    }" in ${activity.courses.subject} for ${activity.courses.grade_level}.
+    const activityTitle = activity?.title || nodeConfig?.title || "Activity";
+    const activitySubject = activity?.courses?.subject || "subject";
+    const activityGrade = activity?.courses?.grade_level || "grade";
+    const learningObjectivesList: string[] = Array.isArray(learning_objectives)
+      ? learning_objectives
+      : Array.isArray(activity?.lessons?.learning_objectives)
+      ? activity.lessons.learning_objectives
+      : Array.isArray(nodeConfig?.learning_objectives)
+      ? nodeConfig.learning_objectives
+      : [];
+    const masteredList: string[] = Array.isArray(concepts_mastered)
+      ? concepts_mastered
+      : [];
+    const strugglingList: string[] = Array.isArray(concepts_struggling)
+      ? concepts_struggling
+      : [];
+
+    const systemPrompt = `You are an AI tutor helping a student with "${activityTitle}" in ${activitySubject} for ${activityGrade}.
 
 Learning Objectives:
-${learning_objectives
+${learningObjectivesList
   .map((obj: string, i: number) => `${i + 1}. ${obj}`)
   .join("\n")}
 
-Concepts Already Mastered: ${concepts_mastered.join(", ") || "None yet"}
+Concepts Already Mastered: ${masteredList.join(", ") || "None yet"}
 Concepts Student is Struggling With: ${
-      concepts_struggling.join(", ") || "None identified"
+      strugglingList.join(", ") || "None identified"
     }${contextSources}
 
 Your role:
@@ -109,16 +133,16 @@ Respond helpfully and educationally. If the student demonstrates mastery of a ne
     // Generate AI response
     const { text } = await generateText({
       model: google("gemini-1.5-flash"),
-      prompt: context,
+      prompt: `${systemPrompt}\n\nStudent's latest message: "${message || ""}"`,
       maxTokens: 500,
     });
 
     // Analyze the conversation to update concept mastery
     const analysisPrompt = `Based on this conversation, analyze the student's understanding:
 
-Learning Objectives: ${learning_objectives.join(", ")}
-Previously Mastered: ${concepts_mastered.join(", ")}
-Previously Struggling: ${concepts_struggling.join(", ")}
+Learning Objectives: ${learningObjectivesList.join(", ")}
+Previously Mastered: ${masteredList.join(", ")}
+Previously Struggling: ${strugglingList.join(", ")}
 
 Student's message: "${message}"
 AI response: "${text}"
@@ -135,8 +159,8 @@ Return a JSON object with:
 Only include concepts from the learning objectives list.`;
 
     let analysisResult = {
-      concepts_mastered: concepts_mastered,
-      concepts_struggling: concepts_struggling,
+      concepts_mastered: masteredList,
+      concepts_struggling: strugglingList,
       concepts_addressed: [],
       points_earned: 0,
       mastery_explanation: "",
@@ -157,29 +181,33 @@ Only include concepts from the learning objectives list.`;
     }
 
     // Update chat session
-    const updatedHistory = [
-      ...chat_history,
-      {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: text,
-        timestamp: new Date().toISOString(),
-        concepts_addressed: analysisResult.concepts_addressed,
-      },
-    ];
+    // If a session is provided and we have an authenticated user, update the DB
+    if (session_id && user) {
+      const safeHistory = Array.isArray(chat_history) ? chat_history : [];
+      const updatedHistory = [
+        ...safeHistory,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: text,
+          timestamp: new Date().toISOString(),
+          concepts_addressed: analysisResult.concepts_addressed,
+        },
+      ];
 
-    await supabase
-      .from("ai_chat_sessions")
-      .update({
-        chat_history: updatedHistory,
-        concepts_mastered: analysisResult.concepts_mastered,
-        concepts_struggling: analysisResult.concepts_struggling,
-        total_messages: updatedHistory.length,
-      })
-      .eq("id", session_id);
+      await supabase
+        .from("ai_chat_sessions")
+        .update({
+          chat_history: updatedHistory,
+          concepts_mastered: analysisResult.concepts_mastered,
+          concepts_struggling: analysisResult.concepts_struggling,
+          total_messages: updatedHistory.length,
+        })
+        .eq("id", session_id);
+    }
 
     // Award points if concepts were mastered
-    if (analysisResult.points_earned > 0) {
+    if (analysisResult.points_earned > 0 && user && activity) {
       await supabase.from("student_points").upsert(
         {
           student_id: user.id,
@@ -196,7 +224,7 @@ Only include concepts from the learning objectives list.`;
 
       // Update learning objective progress
       for (const concept of analysisResult.concepts_mastered) {
-        if (!concepts_mastered.includes(concept)) {
+        if (!masteredList.includes(concept)) {
           await supabase.from("learning_objective_progress").upsert(
             {
               student_id: user.id,
@@ -214,9 +242,14 @@ Only include concepts from the learning objectives list.`;
       }
     }
 
+    // Map to include performanceScore for EnhancedActivityPlayer compatibility
     return NextResponse.json({
       response: text,
       ...analysisResult,
+      performanceScore:
+        typeof analysisResult.points_earned === "number"
+          ? Math.min(100, Math.max(0, analysisResult.points_earned * 2))
+          : 70,
     });
   } catch (error) {
     console.error("AI Chat API error:", error);

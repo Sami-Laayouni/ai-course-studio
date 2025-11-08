@@ -27,17 +27,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate a simple join code
-    const generateJoinCode = () => {
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-      let result = "";
-      for (let i = 0; i < 6; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
-    };
-
-    // Insert course with join code
+    // Insert course - don't include join_code, let database trigger handle it if column exists
+    // This prevents errors if the join_code column doesn't exist in the schema
     const { data: course, error: insertError } = await supabase
       .from("courses")
       .insert({
@@ -48,7 +39,7 @@ export async function POST(request: NextRequest) {
         learning_objectives: learning_objectives || [],
         teacher_id: user.id,
         is_published: false,
-        join_code: generateJoinCode(),
+        // Note: join_code is intentionally omitted - database trigger will generate it if column exists
       })
       .select()
       .single();

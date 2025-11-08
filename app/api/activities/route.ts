@@ -26,10 +26,10 @@ export async function POST(request: NextRequest) {
       collaboration_settings = {},
     } = body;
 
-    // Validate required fields
-    if (!title || !lesson_id || !course_id) {
+    // Validate required fields - lesson_id is optional now (activities belong directly to courses)
+    if (!title || !course_id) {
       return NextResponse.json(
-        { error: "Missing required fields: title, lesson_id, course_id" },
+        { error: "Missing required fields: title, course_id" },
         { status: 400 }
       );
     }

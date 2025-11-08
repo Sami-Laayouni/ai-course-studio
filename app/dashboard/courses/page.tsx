@@ -113,10 +113,10 @@ export default async function CoursesPage() {
                   {/* Actions */}
                   <div className="flex items-center gap-2">
                     <Button variant="outline" size="sm" className="flex-1 bg-transparent" asChild>
-                      <Link href={`/dashboard/courses/${course.id}`}>Edit</Link>
+                      <Link href={`/dashboard/courses/${course.id}/activities/new`}>Edit Course</Link>
                     </Button>
                     <Button variant="outline" size="sm" className="flex-1 bg-transparent" asChild>
-                      <Link href={`/dashboard/courses/${course.id}/activities`}>Activities</Link>
+                      <Link href={`/dashboard/courses/${course.id}`}>View</Link>
                     </Button>
                   </div>
 

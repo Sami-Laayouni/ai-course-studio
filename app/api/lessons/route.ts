@@ -39,17 +39,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Course not found" }, { status: 404 });
     }
 
-    // Generate a simple join code
-    const generateJoinCode = () => {
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-      let result = "";
-      for (let i = 0; i < 6; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
-    };
-
-    // Create the lesson
+    // Create the lesson - don't include join_code, let database trigger handle it if column exists
+    // This prevents errors if the join_code column doesn't exist in the schema
     const { data: lesson, error: lessonError } = await supabase
       .from("lessons")
       .insert({
@@ -61,7 +52,7 @@ export async function POST(request: NextRequest) {
         estimated_duration: estimated_duration || null,
         content_source_type: content_source_type || "manual",
         content_source_data: content_source_data || {},
-        join_code: generateJoinCode(),
+        // Note: join_code is intentionally omitted - database trigger will generate it if column exists
       })
       .select()
       .single();

@@ -11,20 +11,13 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ArrowLeft, Brain, Save } from "lucide-react"
+import { ArrowLeft, Brain, Save, Zap } from "lucide-react"
 import Link from "next/link"
+import SimpleZapierBuilder from "@/components/learning/simple-zapier-builder"
 
 interface NewActivityPageProps {
   params: Promise<{ id: string }>
 }
-
-const ACTIVITY_TYPES = [
-  { value: "quiz", label: "Quiz", description: "Multiple choice, true/false, and short answer questions" },
-  { value: "assignment", label: "Assignment", description: "Project-based learning activities" },
-  { value: "reading", label: "Reading Material", description: "Educational articles and passages" },
-  { value: "video", label: "Video Content", description: "Video lessons and tutorials" },
-  { value: "interactive", label: "Interactive Activity", description: "Hands-on learning experiences" },
-]
 
 const DIFFICULTY_LEVELS = [
   { value: 1, label: "Beginner" },
@@ -36,15 +29,17 @@ const DIFFICULTY_LEVELS = [
 
 export default function NewActivityPage({ params }: NewActivityPageProps) {
   const [courseId, setCourseId] = useState<string>("")
+  const [activityId, setActivityId] = useState<string | null>(null)
   const [course, setCourse] = useState<any>(null)
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
-  const [activityType, setActivityType] = useState("")
   const [difficulty, setDifficulty] = useState<number>(3)
   const [duration, setDuration] = useState<number>(30)
-  const [content, setContent] = useState("{}")
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingData, setIsLoadingData] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [showBuilder, setShowBuilder] = useState(false)
+  const [basicInfoComplete, setBasicInfoComplete] = useState(false)
 
   const router = useRouter()
   const supabase = createClient()
@@ -54,9 +49,46 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
       const resolvedParams = await params
       setCourseId(resolvedParams.id)
       loadCourse(resolvedParams.id)
+      
+      // Check if editing existing activity
+      const urlParams = new URLSearchParams(window.location.search)
+      const editId = urlParams.get('id')
+      if (editId) {
+        setActivityId(editId)
+        loadActivity(editId)
+      } else {
+        setIsLoadingData(false)
+      }
     }
     loadParams()
   }, [params])
+  
+  const loadActivity = async (id: string) => {
+    try {
+      const { data, error } = await supabase
+        .from("activities")
+        .select("*")
+        .eq("id", id)
+        .single()
+
+      if (error) throw error
+      
+      setTitle(data.title || "")
+      setDescription(data.description || "")
+      setDifficulty(data.difficulty_level || 3)
+      setDuration(data.estimated_duration || 30)
+      setIsLoadingData(false)
+      // If activity has content, show builder
+      if (data.content && Object.keys(data.content).length > 0) {
+        setShowBuilder(true)
+        setBasicInfoComplete(true)
+      }
+    } catch (error) {
+      console.error("Error loading activity:", error)
+      setError("Failed to load activity")
+      setIsLoadingData(false)
+    }
+  }
 
   const loadCourse = async (id: string) => {
     try {
@@ -69,30 +101,53 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
     }
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleBasicInfoSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    setIsLoading(true)
-    setError(null)
+    
+    if (!title || !duration) {
+      setError("Please fill in title and duration")
+      return
+    }
 
+    // Save basic info and open builder
+    setBasicInfoComplete(true)
+    setShowBuilder(true)
+  }
+
+  const handleActivityCreated = async (activity: any) => {
     try {
-      let parsedContent
-      try {
-        parsedContent = JSON.parse(content)
-      } catch {
-        parsedContent = { content: content }
+      setIsLoading(true)
+      
+      // Save activity to database
+      const activityData = {
+        course_id: courseId,
+        title: title || activity.title || "Custom Activity",
+        description: description || activity.description || "",
+        content: activity.content || activity,
+        activity_type: "custom",
+        activity_subtype: "zapier_workflow",
+        difficulty_level: difficulty,
+        estimated_duration: duration || activity.estimated_duration || 30,
+        points: activity.points || 100,
+        is_enhanced: true,
+        is_adaptive: true,
+        ...activity,
       }
 
-      const { error } = await supabase.from("activities").insert({
-        course_id: courseId,
-        title,
-        description,
-        activity_type: activityType,
-        content: parsedContent,
-        difficulty_level: difficulty,
-        estimated_duration: duration,
-      })
-
-      if (error) throw error
+      if (activityId) {
+        // Update existing
+        const { error } = await supabase
+          .from("activities")
+          .update(activityData)
+          .eq("id", activityId)
+        if (error) throw error
+      } else {
+        // Create new
+        const { error } = await supabase
+          .from("activities")
+          .insert(activityData)
+        if (error) throw error
+      }
 
       router.push(`/dashboard/courses/${courseId}`)
     } catch (error: unknown) {
@@ -102,8 +157,25 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
     }
   }
 
-  const generateWithAI = () => {
-    router.push(`/dashboard/ai-generator?courseId=${courseId}`)
+  const handleBuilderClose = () => {
+    setShowBuilder(false)
+    if (!activityId) {
+      // If creating new, reset form
+      setTitle("")
+      setDescription("")
+      setDuration(30)
+    }
+  }
+
+  // Show Zapier builder if basic info is complete
+  if (showBuilder) {
+    return (
+      <SimpleZapierBuilder
+        onActivityCreated={handleActivityCreated}
+        onClose={handleBuilderClose}
+        courseId={courseId}
+      />
+    )
   }
 
   return (
@@ -119,21 +191,30 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
           </Button>
         </div>
 
+        {isLoadingData ? (
+          <div className="text-center py-8">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p>Loading...</p>
+          </div>
+        ) : (
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl">Create New Activity</CardTitle>
+            <CardTitle className="text-2xl flex items-center gap-2">
+              <Zap className="h-6 w-6 text-primary" />
+              {activityId ? "Edit Activity" : "Create Custom Activity"}
+            </CardTitle>
             <CardDescription>
-              {course ? `Add an activity to "${course.title}"` : "Add a new learning activity"}
+              {course ? `${activityId ? "Edit" : "Create a custom"} activity for "${course.title}" using the visual builder` : `${activityId ? "Edit" : "Create a new"} custom learning activity`}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form onSubmit={handleBasicInfoSubmit} className="space-y-6">
               {/* Activity Title */}
               <div className="space-y-2">
                 <Label htmlFor="title">Activity Title *</Label>
                 <Input
                   id="title"
-                  placeholder="e.g., Introduction to Photosynthesis Quiz"
+                  placeholder="e.g., Introduction to Photosynthesis"
                   value={title}
                   onChange={(e) => setTitle(e.target.value)}
                   required
@@ -152,25 +233,19 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
                 />
               </div>
 
-              {/* Activity Type and Difficulty */}
+              {/* Duration and Difficulty */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="activityType">Activity Type *</Label>
-                  <Select value={activityType} onValueChange={setActivityType} required>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select type" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {ACTIVITY_TYPES.map((type) => (
-                        <SelectItem key={type.value} value={type.value}>
-                          <div>
-                            <div className="font-medium">{type.label}</div>
-                            <div className="text-xs text-muted-foreground">{type.description}</div>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="duration">Estimated Duration (minutes) *</Label>
+                  <Input
+                    id="duration"
+                    type="number"
+                    min="5"
+                    max="180"
+                    value={duration}
+                    onChange={(e) => setDuration(Number.parseInt(e.target.value) || 30)}
+                    required
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -193,51 +268,34 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
                 </div>
               </div>
 
-              {/* Duration */}
-              <div className="space-y-2">
-                <Label htmlFor="duration">Estimated Duration (minutes)</Label>
-                <Input
-                  id="duration"
-                  type="number"
-                  min="5"
-                  max="180"
-                  value={duration}
-                  onChange={(e) => setDuration(Number.parseInt(e.target.value) || 30)}
-                />
-              </div>
-
-              {/* Content */}
-              <div className="space-y-2">
-                <Label htmlFor="content">Activity Content (JSON format)</Label>
-                <Textarea
-                  id="content"
-                  placeholder='{"instructions": "Complete the following tasks...", "questions": []}'
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  rows={8}
-                  className="font-mono text-sm"
-                />
-                <p className="text-xs text-muted-foreground">
-                  Enter the activity content in JSON format, or use the AI generator for assistance.
-                </p>
+              {/* Info Box */}
+              <div className="p-4 border rounded-lg bg-blue-50 dark:bg-blue-950">
+                <div className="flex items-start gap-3">
+                  <Zap className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5" />
+                  <div>
+                    <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-1">
+                      Visual Activity Builder
+                    </h4>
+                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                      After entering basic information, you'll use the visual Zapier-style builder to create your custom activity with drag-and-drop components, AI tutoring, quizzes, videos, and more.
+                    </p>
+                  </div>
+                </div>
               </div>
 
               {error && <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-md">{error}</div>}
 
               {/* Actions */}
               <div className="flex gap-4 pt-4">
-                <Button type="submit" disabled={isLoading} className="flex-1">
-                  <Save className="h-4 w-4 mr-2" />
-                  {isLoading ? "Creating..." : "Create Activity"}
-                </Button>
-                <Button type="button" variant="outline" onClick={generateWithAI}>
-                  <Brain className="h-4 w-4 mr-2" />
-                  Generate with AI
+                <Button type="submit" disabled={isLoading} className="flex-1" size="lg">
+                  <Zap className="h-4 w-4 mr-2" />
+                  Continue to Visual Builder
                 </Button>
               </div>
             </form>
           </CardContent>
         </Card>
+        )}
       </div>
     </div>
   )

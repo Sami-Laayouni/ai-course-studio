@@ -1393,7 +1393,7 @@ export default function SimpleZapierBuilder({
         lessonId
       );
 
-      if (courseId && lessonId) {
+      if (courseId) {
         try {
           const response = await fetch("/api/activities", {
             method: "POST",
@@ -1404,12 +1404,15 @@ export default function SimpleZapierBuilder({
               title: activity.title,
               description: activity.description,
               content: activity.content,
-              lesson_id: lessonId,
               course_id: courseId,
+              lesson_id: lessonId || null, // Optional now
               points: activity.points || 10,
               estimated_duration: activity.estimated_duration || 10,
-              activity_type: "quiz",
+              activity_type: "custom",
+              activity_subtype: "zapier_workflow",
               order_index: 0,
+              is_enhanced: true,
+              is_adaptive: true,
             }),
           });
 
@@ -1489,8 +1492,8 @@ export default function SimpleZapierBuilder({
           }
         }
       } else {
-        console.log("Missing courseId or lessonId:", { courseId, lessonId });
-        alert("Error: Missing course or lesson information");
+        console.log("Missing courseId:", { courseId });
+        alert("Error: Missing course information");
       }
 
       onActivityCreated(activity);

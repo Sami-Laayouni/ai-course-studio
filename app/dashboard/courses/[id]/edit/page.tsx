@@ -1,10 +1,8 @@
 "use client";
 
 import type React from "react";
-
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -24,7 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { X, Plus, ArrowLeft } from "lucide-react";
+import { X, Plus, ArrowLeft, Save } from "lucide-react";
 import Link from "next/link";
 
 const SUBJECTS = [
@@ -60,7 +58,12 @@ const GRADE_LEVELS = [
   "Adult Education",
 ];
 
-export default function NewCoursePage() {
+interface EditCoursePageProps {
+  params: Promise<{ id: string }>;
+}
+
+export default function EditCoursePage({ params }: EditCoursePageProps) {
+  const [courseId, setCourseId] = useState<string>("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [subject, setSubject] = useState("");
@@ -68,10 +71,40 @@ export default function NewCoursePage() {
   const [learningObjectives, setLearningObjectives] = useState<string[]>([]);
   const [newObjective, setNewObjective] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingData, setIsLoadingData] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const router = useRouter();
-  const supabase = createClient();
+
+  useEffect(() => {
+    const initializeParams = async () => {
+      const resolvedParams = await params;
+      setCourseId(resolvedParams.id);
+      fetchCourseData(resolvedParams.id);
+    };
+    initializeParams();
+  }, [params]);
+
+  const fetchCourseData = async (id: string) => {
+    try {
+      const response = await fetch(`/api/courses/${id}`);
+      if (!response.ok) {
+        throw new Error("Failed to load course");
+      }
+      const data = await response.json();
+      const course = data.course;
+      
+      setTitle(course.title || "");
+      setDescription(course.description || "");
+      setSubject(course.subject || "");
+      setGradeLevel(course.grade_level || "");
+      setLearningObjectives(course.learning_objectives || []);
+    } catch (error) {
+      setError("Failed to load course data");
+    } finally {
+      setIsLoadingData(false);
+    }
+  };
 
   const addLearningObjective = () => {
     if (
@@ -93,8 +126,8 @@ export default function NewCoursePage() {
     setError(null);
 
     try {
-      const response = await fetch("/api/courses", {
-        method: "POST",
+      const response = await fetch(`/api/courses/${courseId}`, {
+        method: "PATCH",
         headers: {
           "Content-Type": "application/json",
         },
@@ -110,11 +143,11 @@ export default function NewCoursePage() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.error || "Failed to create course");
+        throw new Error(data.error || "Failed to update course");
       }
 
-      // Redirect to course page with success message
-      router.push(`/dashboard/courses/${data.course.id}?created=true`);
+      // Redirect back to course page
+      router.push(`/dashboard/courses/${courseId}`);
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred");
     } finally {
@@ -122,25 +155,35 @@ export default function NewCoursePage() {
     }
   };
 
+  if (isLoadingData) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p>Loading course...</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-2xl">
         {/* Header */}
         <div className="flex items-center gap-4 mb-8">
           <Button variant="ghost" size="sm" asChild>
-            <Link href="/dashboard/courses">
+            <Link href={`/dashboard/courses/${courseId}`}>
               <ArrowLeft className="h-4 w-4 mr-2" />
-              Back to Courses
+              Back to Course
             </Link>
           </Button>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-2xl">Create New Course</CardTitle>
+            <CardTitle className="text-2xl">Edit Course</CardTitle>
             <CardDescription>
-              Set up your course details and learning objectives. You can add
-              activities and content after creation.
+              Update your course details and learning objectives.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -267,10 +310,10 @@ export default function NewCoursePage() {
               {/* Actions */}
               <div className="flex gap-4 pt-4">
                 <Button type="submit" disabled={isLoading} className="flex-1">
-                  {isLoading ? "Creating..." : "Create Course"}
+                  {isLoading ? "Saving..." : "Save Changes"}
                 </Button>
                 <Button type="button" variant="outline" asChild>
-                  <Link href="/dashboard/courses">Cancel</Link>
+                  <Link href={`/dashboard/courses/${courseId}`}>Cancel</Link>
                 </Button>
               </div>
             </form>
@@ -280,3 +323,4 @@ export default function NewCoursePage() {
     </div>
   );
 }
+

@@ -50,11 +50,6 @@ export function Sidebar({ userRole }: SidebarProps) {
             label: "Database Status",
             icon: Database,
           },
-          {
-            href: "/dashboard/ai-generator",
-            label: "AI Generator",
-            icon: Brain,
-          },
           { href: "/admin/users", label: "User Management", icon: Users },
           {
             href: "/admin/courses",
@@ -68,11 +63,6 @@ export function Sidebar({ userRole }: SidebarProps) {
         return [
           { href: "/dashboard", label: "Dashboard", icon: Home },
           { href: "/dashboard/courses", label: "My Courses", icon: BookOpen },
-          {
-            href: "/dashboard/ai-generator",
-            label: "AI Generator",
-            icon: Brain,
-          },
           {
             href: "/dashboard/courses/new",
             label: "Create Course",

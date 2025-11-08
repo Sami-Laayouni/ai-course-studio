@@ -25,15 +25,18 @@ export default function LoginPage() {
     setError(null)
 
     try {
-      const { error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       })
       if (error) throw error
-      router.push("/dashboard")
+      
+      // Wait a moment for cookies to be set, then redirect
+      // Use window.location for a full page reload to ensure cookies sync
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      window.location.href = "/dashboard"
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred")
-    } finally {
       setIsLoading(false)
     }
   }

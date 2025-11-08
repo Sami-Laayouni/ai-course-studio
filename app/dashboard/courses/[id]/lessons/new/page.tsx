@@ -102,8 +102,7 @@ export default function NewLessonPage({ params }: NewLessonPageProps) {
           <CardHeader>
             <CardTitle className="text-2xl">Create New Lesson</CardTitle>
             <CardDescription>
-              Start with basic information. You'll be able to add activities and
-              customize everything in the visual editor.
+              Give your lesson a name and description. You can add activities, quizzes, and interactive content in the editor after creation.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -144,19 +143,19 @@ export default function NewLessonPage({ params }: NewLessonPageProps) {
                 </div>
               </div>
 
-              {/* AI Option */}
-              <div className="p-4 border rounded-lg bg-primary/5">
+              {/* Quick Tips */}
+              <div className="p-4 border rounded-lg bg-blue-50 dark:bg-blue-950">
                 <div className="flex items-start gap-3">
-                  <Sparkles className="h-5 w-5 text-primary mt-0.5" />
+                  <Sparkles className="h-5 w-5 text-blue-600 dark:text-blue-400 mt-0.5" />
                   <div>
-                    <h4 className="font-medium text-primary">
-                      AI-Powered Activities
+                    <h4 className="font-medium text-blue-900 dark:text-blue-100">
+                      Quick Start Tips
                     </h4>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      After creating your lesson, you can use AI to generate
-                      quizzes, interactive activities, and custom content in the
-                      visual editor.
-                    </p>
+                    <ul className="text-sm text-blue-800 dark:text-blue-200 mt-2 space-y-1 list-disc list-inside">
+                      <li>Start with a clear title and description</li>
+                      <li>Add activities and content in the visual editor</li>
+                      <li>Use AI to generate quizzes and interactive content</li>
+                    </ul>
                   </div>
                 </div>
               </div>
@@ -169,11 +168,11 @@ export default function NewLessonPage({ params }: NewLessonPageProps) {
 
               {/* Actions */}
               <div className="flex gap-4 pt-4">
-                <Button type="submit" disabled={isLoading} className="flex-1">
+                <Button type="submit" disabled={isLoading} className="flex-1" size="lg">
                   {isLoading ? "Creating..." : "Create Lesson & Open Editor"}
                 </Button>
-                <Button type="button" variant="outline" asChild>
-                  <Link href={`/dashboard/courses/${courseId}/lessons`}>
+                <Button type="button" variant="outline" size="lg" asChild>
+                  <Link href={`/dashboard/courses/${courseId}`}>
                     Cancel
                   </Link>
                 </Button>
