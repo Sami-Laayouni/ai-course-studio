@@ -6,17 +6,25 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
  * NEVER expose this client to the client-side code
  */
 export function createServiceClient() {
-  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!supabaseUrl) {
+    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL environment variable");
   }
   
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY");
+  if (!serviceRoleKey) {
+    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY environment variable. Please set this in your .env.local file or Vercel environment variables.");
+  }
+
+  // Validate that the service role key looks correct (starts with 'eyJ' for JWT)
+  if (!serviceRoleKey.startsWith('eyJ')) {
+    console.warn("Warning: SUPABASE_SERVICE_ROLE_KEY doesn't look like a valid JWT token. Make sure you're using the service_role key, not the anon key.");
   }
 
   return createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY,
+    supabaseUrl,
+    serviceRoleKey,
     {
       auth: {
         autoRefreshToken: false,

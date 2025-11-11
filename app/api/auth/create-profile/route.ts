@@ -4,6 +4,23 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
+    // Check for required environment variables first
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      console.error("Missing NEXT_PUBLIC_SUPABASE_URL");
+      return NextResponse.json(
+        { error: "Server configuration error: Missing Supabase URL" },
+        { status: 500 }
+      );
+    }
+
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error("Missing SUPABASE_SERVICE_ROLE_KEY");
+      return NextResponse.json(
+        { error: "Server configuration error: Missing Supabase service role key. Please set SUPABASE_SERVICE_ROLE_KEY in your environment variables." },
+        { status: 500 }
+      );
+    }
+
     const body = await request.json();
     const { user_id, email, full_name, role, school_name } = body;
 
@@ -19,7 +36,16 @@ export async function POST(request: NextRequest) {
 
     // Use service role client to bypass RLS for profile creation
     // This allows creating profiles for unconfirmed users
-    const serviceClient = createServiceClient();
+    let serviceClient;
+    try {
+      serviceClient = createServiceClient();
+    } catch (clientError) {
+      console.error("Failed to create service client:", clientError);
+      return NextResponse.json(
+        { error: "Server configuration error", details: clientError instanceof Error ? clientError.message : String(clientError) },
+        { status: 500 }
+      );
+    }
 
     // Get user email if not provided
     let userEmail = email;
