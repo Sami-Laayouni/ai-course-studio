@@ -32,6 +32,7 @@ import {
   Star,
   Trophy,
   Zap,
+  X,
 } from "lucide-react";
 
 interface ActivityNode {
@@ -85,6 +86,8 @@ export default function EnhancedActivityPlayer({
   const [currentPath, setCurrentPath] = useState<"mastery" | "novel" | null>(null);
   const [videoWatched, setVideoWatched] = useState(false);
   const [pdfViewed, setPdfViewed] = useState(false);
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(-1);
+  const [videoTime, setVideoTime] = useState<number>(0);
 
   const startTime = useRef<number>(Date.now());
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -110,6 +113,55 @@ export default function EnhancedActivityPlayer({
       }
     };
   }, [activity]);
+
+  // Track video time and show questions at appropriate timestamps
+  useEffect(() => {
+    if (currentNode?.type === "video") {
+      const autoQuestions = currentNode.config?.auto_questions || [];
+      const videoUrl = currentNode.config?.youtube_url || currentNode.config?.video_url || "";
+      const extractVideoId = (url: string) => {
+        const match = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
+        return match ? match[1] : null;
+      };
+      const videoId = extractVideoId(videoUrl);
+      
+      if (autoQuestions.length > 0 && videoId) {
+        // Reset when switching to a video node
+        setCurrentQuestionIndex(-1);
+        setVideoTime(0);
+        
+        // Use YouTube IFrame API to track actual video time
+        // For now, use a timer that can be synced with YouTube player
+        const interval = setInterval(() => {
+          setVideoTime((prev) => {
+            const nextTime = prev + 1;
+            // Find the next question that should be shown
+            const nextQuestion = autoQuestions.findIndex(
+              (q: any, idx: number) => {
+                const questionTime = q.timestamp || 0;
+                const prevQuestionTime = idx > 0 ? (autoQuestions[idx - 1].timestamp || 0) : -1;
+                // Show question if we've reached its timestamp and haven't shown it yet
+                return questionTime <= nextTime && 
+                       (prevQuestionTime < nextTime || idx === 0) &&
+                       idx !== currentQuestionIndex;
+              }
+            );
+            if (nextQuestion !== -1) {
+              setCurrentQuestionIndex(nextQuestion);
+            }
+            return nextTime;
+          });
+        }, 1000);
+        return () => clearInterval(interval);
+      } else {
+        setCurrentQuestionIndex(-1);
+        setVideoTime(0);
+      }
+    } else {
+      setCurrentQuestionIndex(-1);
+      setVideoTime(0);
+    }
+  }, [currentNode?.id, currentNode?.type, currentNode?.config?.auto_questions, currentNode?.config?.youtube_url]);
 
   // Update progress
   useEffect(() => {
@@ -219,21 +271,24 @@ export default function EnhancedActivityPlayer({
   const handleAIChat = async () => {
     if (!currentNode) return;
 
-    const response = await fetch("/api/ai-chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        message: studentInput,
-        context: contextSources,
-        nodeConfig: currentNode.config,
-        performanceHistory,
-        activityId: activity.id,
-        enable_branching: currentNode.config?.enable_branching || false,
-        mastery_path: currentNode.config?.mastery_path || "Mastery Path",
-        novel_path: currentNode.config?.novel_path || "Novel Path",
-        performance_threshold: currentNode.config?.performance_threshold || 70,
-      }),
-    });
+      const response = await fetch("/api/ai-chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: studentInput,
+          context: contextSources,
+          nodeConfig: currentNode.config,
+          performanceHistory,
+          activityId: activity.id,
+          enable_branching: currentNode.config?.enable_branching || false,
+          mastery_path: currentNode.config?.mastery_path || "Mastery Path",
+          novel_path: currentNode.config?.novel_path || "Novel Path",
+          performance_threshold: currentNode.config?.performance_threshold || 70,
+          learning_style: "visual", // Can be made configurable
+          current_phase: "practice",
+          enable_visuals: true,
+        }),
+      });
 
     if (!response.ok) {
       throw new Error("Failed to get AI response");
@@ -681,6 +736,7 @@ export default function EnhancedActivityPlayer({
           return match ? match[1] : null;
         };
         const videoId = extractVideoId(videoUrl);
+        const autoQuestions = currentNode.config?.auto_questions || [];
         
         return (
           <div className="space-y-4">
@@ -689,19 +745,61 @@ export default function EnhancedActivityPlayer({
               {currentNode.description && (
                 <p className="text-red-800">{currentNode.description}</p>
               )}
+              {currentNode.config?.auto_add_questions && autoQuestions.length > 0 && (
+                <div className="mt-2 text-xs text-red-700">
+                  <Info className="h-3 w-3 inline mr-1" />
+                  {autoQuestions.length} comprehension questions will appear during the video
+                </div>
+              )}
             </div>
             {videoId ? (
-              <div className="aspect-video w-full rounded-lg overflow-hidden">
-                <iframe
-                  width="100%"
-                  height="100%"
-                  src={`https://www.youtube.com/embed/${videoId}`}
-                  title={currentNode.title}
-                  frameBorder="0"
-                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                  allowFullScreen
-                  className="w-full h-full"
-                />
+              <div className="space-y-4">
+                <div className="aspect-video w-full rounded-lg overflow-hidden">
+                  <iframe
+                    width="100%"
+                    height="100%"
+                    src={`https://www.youtube.com/embed/${videoId}`}
+                    title={currentNode.title}
+                    frameBorder="0"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                    className="w-full h-full"
+                  />
+                </div>
+                {currentQuestionIndex >= 0 && autoQuestions[currentQuestionIndex] && (
+                  <div className="bg-blue-50 dark:bg-blue-950/20 border-l-4 border-blue-500 p-4 rounded-md">
+                    <div className="flex items-start gap-3">
+                      <div className="text-2xl">❓</div>
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-blue-900 dark:text-blue-100 mb-1">
+                          Question at {Math.floor((autoQuestions[currentQuestionIndex].timestamp || 0) / 60)}:{(autoQuestions[currentQuestionIndex].timestamp || 0) % 60 < 10 ? '0' : ''}{(autoQuestions[currentQuestionIndex].timestamp || 0) % 60}
+                        </p>
+                        <p className="text-sm text-blue-800 dark:text-blue-200 mb-2">
+                          {autoQuestions[currentQuestionIndex].question}
+                        </p>
+                        {autoQuestions[currentQuestionIndex].concept && (
+                          <p className="text-xs text-blue-600 dark:text-blue-300 italic">
+                            Testing: {autoQuestions[currentQuestionIndex].concept}
+                          </p>
+                        )}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setCurrentQuestionIndex(-1)}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {autoQuestions.length > 0 && currentQuestionIndex === -1 && (
+                  <div className="bg-gray-50 dark:bg-gray-900 p-3 rounded-md">
+                    <p className="text-xs text-gray-600 dark:text-gray-400">
+                      💡 Questions will appear automatically at key learning moments
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="bg-gray-900 rounded-lg p-8 text-center">

@@ -6,6 +6,7 @@ export async function GET(request: NextRequest) {
     const supabase = await createClient();
     const { searchParams } = new URL(request.url);
     const unread_only = searchParams.get("unread_only") === "true";
+    const limit = parseInt(searchParams.get("limit") || "50");
 
     // Check authentication
     const {
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
       query = query.eq("is_read", false);
     }
 
-    const { data: notifications, error } = await query.limit(50);
+    const { data: notifications, error } = await query.limit(limit);
 
     if (error) {
       throw error;
@@ -46,7 +47,7 @@ export async function PATCH(request: NextRequest) {
   try {
     const supabase = await createClient();
     const body = await request.json();
-    const { notification_id, mark_as_read } = body;
+    const { notification_id, notification_ids, mark_as_read, action } = body;
 
     // Check authentication
     const {
@@ -57,11 +58,38 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    if (notification_id) {
-      // Mark specific notification as read
+    // Handle different actions
+    if (action === "mark_read") {
+      const ids = notification_ids || (notification_id ? [notification_id] : []);
+      if (ids.length > 0) {
+        const { error } = await supabase
+          .from("notifications")
+          .update({ is_read: true, read_at: new Date().toISOString() })
+          .in("id", ids)
+          .eq("user_id", user.id);
+
+        if (error) {
+          throw error;
+        }
+      }
+    } else if (action === "delete") {
+      const ids = notification_ids || (notification_id ? [notification_id] : []);
+      if (ids.length > 0) {
+        const { error } = await supabase
+          .from("notifications")
+          .delete()
+          .in("id", ids)
+          .eq("user_id", user.id);
+
+        if (error) {
+          throw error;
+        }
+      }
+    } else if (notification_id) {
+      // Mark specific notification as read (backward compatibility)
       const { error } = await supabase
         .from("notifications")
-        .update({ is_read: true })
+        .update({ is_read: true, read_at: new Date().toISOString() })
         .eq("id", notification_id)
         .eq("user_id", user.id);
 
@@ -72,7 +100,7 @@ export async function PATCH(request: NextRequest) {
       // Mark all notifications as read
       const { error } = await supabase
         .from("notifications")
-        .update({ is_read: true })
+        .update({ is_read: true, read_at: new Date().toISOString() })
         .eq("user_id", user.id)
         .eq("is_read", false);
 

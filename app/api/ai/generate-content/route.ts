@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
 import { createClient } from "@/lib/supabase/server";
+import genAI from "@/lib/genai";
 
 export async function POST(request: NextRequest) {
   try {
@@ -50,11 +49,35 @@ export async function POST(request: NextRequest) {
     );
 
     // Generate content using Google AI
-    const { text } = await generateText({
-      model: google("gemini-1.5-flash"),
-      prompt,
-      temperature: 0.7,
+    if (!process.env.GOOGLE_AI_API_KEY) {
+      return NextResponse.json(
+        { error: "API key not configured" },
+        { status: 500 }
+      );
+    }
+
+    const config = {
+      responseMimeType: "text/plain",
+      maxOutputTokens: 2000,
+    };
+
+    const response = await genAI.models.generateContentStream({
+      model: "gemini-2.0-flash-lite",
+      config,
+      contents: [
+        {
+          role: "user",
+          text: prompt,
+        },
+      ],
     });
+
+    let text = "";
+    for await (const chunk of response) {
+      if (chunk.text) {
+        text += chunk.text;
+      }
+    }
 
     // Parse the generated content
     let parsedContent;
@@ -80,7 +103,7 @@ export async function POST(request: NextRequest) {
       prompt: prompt,
       generated_content: generatedContent,
       content_type: contentType,
-      model_used: "gemini-1.5-flash",
+      model_used: "gemini-2.0-flash-lite",
     });
 
     return NextResponse.json({ content: generatedContent });

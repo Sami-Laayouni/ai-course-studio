@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { Bell, X, Check, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -30,6 +31,7 @@ interface NotificationBellProps {
 }
 
 export function NotificationBell({ className }: NotificationBellProps) {
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [isOpen, setIsOpen] = useState(false);
@@ -44,6 +46,7 @@ export function NotificationBell({ className }: NotificationBellProps) {
 
   const loadNotifications = async () => {
     try {
+      setIsLoading(true);
       const response = await fetch("/api/notifications?limit=20");
       const data = await response.json();
 
@@ -55,6 +58,8 @@ export function NotificationBell({ className }: NotificationBellProps) {
       }
     } catch (error) {
       console.error("Error loading notifications:", error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -136,6 +141,8 @@ export function NotificationBell({ className }: NotificationBellProps) {
         return "📝";
       case "lesson":
         return "📚";
+      case "activity":
+        return "💡";
       case "invite":
         return "🔗";
       case "reminder":
@@ -144,6 +151,28 @@ export function NotificationBell({ className }: NotificationBellProps) {
         return "🏆";
       default:
         return "📢";
+    }
+  };
+
+  const handleNotificationClick = (notification: Notification) => {
+    // Mark as read
+    if (!notification.is_read) {
+      markAsRead([notification.id]);
+    }
+
+    // Navigate based on notification type and data
+    if (notification.data?.activity_id) {
+      router.push(`/learn/activities/${notification.data.activity_id}`);
+      setIsOpen(false);
+    } else if (notification.data?.course_id) {
+      router.push(`/learn/courses/${notification.data.course_id}`);
+      setIsOpen(false);
+    } else if (notification.data?.lesson_id) {
+      router.push(`/learn/lessons/${notification.data.lesson_id}`);
+      setIsOpen(false);
+    } else if (notification.data?.assignment_id) {
+      router.push(`/learn/assignments/${notification.data.assignment_id}`);
+      setIsOpen(false);
     }
   };
 
@@ -194,25 +223,25 @@ export function NotificationBell({ className }: NotificationBellProps) {
 
           <CardContent className="p-0">
             <ScrollArea className="h-96">
-              {notifications.length === 0 ? (
+              {isLoading ? (
+                <div className="p-4 text-center text-muted-foreground">
+                  Loading notifications...
+                </div>
+              ) : notifications.length === 0 ? (
                 <div className="p-4 text-center text-muted-foreground">
                   No notifications yet
                 </div>
               ) : (
                 <div className="space-y-1">
                   {notifications.map((notification, index) => (
-                    <div key={notification.id}>
+                    <div key={notification.id} className="group">
                       <div
                         className={`p-4 hover:bg-muted/50 cursor-pointer transition-colors ${
                           !notification.is_read
-                            ? "bg-blue-50 border-l-4 border-l-blue-500"
+                            ? "bg-blue-50 dark:bg-blue-950/20 border-l-4 border-l-blue-500"
                             : ""
                         }`}
-                        onClick={() => {
-                          if (!notification.is_read) {
-                            markAsRead([notification.id]);
-                          }
-                        }}
+                        onClick={() => handleNotificationClick(notification)}
                       >
                         <div className="flex items-start gap-3">
                           <div className="text-lg">
@@ -231,9 +260,18 @@ export function NotificationBell({ className }: NotificationBellProps) {
                                 />
                               )}
                             </div>
-                            <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
-                              {notification.message}
-                            </p>
+                            {notification.type === "activity" &&
+                            notification.data?.captivating_question ? (
+                              <div className="mb-2 p-2 bg-blue-50 dark:bg-blue-950/20 rounded-md border-l-2 border-blue-500">
+                                <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                                  {notification.data.captivating_question}
+                                </p>
+                              </div>
+                            ) : (
+                              <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
+                                {notification.message}
+                              </p>
+                            )}
                             <div className="flex items-center justify-between">
                               <span className="text-xs text-muted-foreground">
                                 {formatDistanceToNow(
@@ -248,7 +286,7 @@ export function NotificationBell({ className }: NotificationBellProps) {
                                   e.stopPropagation();
                                   deleteNotifications([notification.id]);
                                 }}
-                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
                               >
                                 <Trash2 className="h-3 w-3" />
                               </Button>

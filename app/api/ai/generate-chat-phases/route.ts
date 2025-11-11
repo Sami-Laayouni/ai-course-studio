@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
+import genAI from "@/lib/genai";
 
 export async function POST(request: NextRequest) {
   try {
@@ -105,10 +104,35 @@ Return the response as valid JSON with this structure:
 Make the instructions specific, engaging, and appropriate for the grade level. The AI tutor should be encouraging, patient, and adaptive to student needs.
 `;
 
-    const { text } = await generateText({
-      model: google("gemini-1.5-flash"),
-      prompt,
+    if (!process.env.GOOGLE_AI_API_KEY) {
+      return NextResponse.json(
+        { error: "API key not configured" },
+        { status: 500 }
+      );
+    }
+
+    const config = {
+      responseMimeType: "text/plain",
+      maxOutputTokens: 2000,
+    };
+
+    const response = await genAI.models.generateContentStream({
+      model: "gemini-2.0-flash-lite",
+      config,
+      contents: [
+        {
+          role: "user",
+          text: prompt,
+        },
+      ],
     });
+
+    let text = "";
+    for await (const chunk of response) {
+      if (chunk.text) {
+        text += chunk.text;
+      }
+    }
 
     let phases;
     try {

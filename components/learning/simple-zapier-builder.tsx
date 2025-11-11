@@ -395,6 +395,9 @@ export default function SimpleZapierBuilder({
   >([]);
   const [showContextSelector, setShowContextSelector] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState<
+    string | null
+  >(null);
   // Use props for title/description instead of internal state
   const workflowTitle = title || "";
   const workflowDescription = description || "";
@@ -440,85 +443,106 @@ export default function SimpleZapierBuilder({
   const canvasRef = useRef<HTMLDivElement>(null);
   const nodeIdCounter = useRef(0);
   const connectionIdCounter = useRef(0);
+  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isGeneratingQuestionsRef = useRef<Set<string>>(new Set());
 
-  // Auto-save functionality
+  // Debounced auto-save functionality
   const autoSave = async () => {
     if (!courseId) return;
 
-    setIsAutoSaving(true);
-    try {
-      const activityData = {
-        title: workflowTitle,
-        description: workflowDescription,
-        nodes,
-        connections,
-        courseId,
-        activityId,
-        context_sources: selectedContextSources,
-        lastSaved: new Date().toISOString(),
-      };
-
-      // Use consistent key based on activityId or courseId
-      const saveKey = activityId || autoSaveKey || `draft_${courseId}`;
-      const draftKey = `activity_draft_${saveKey}`;
-
-      localStorage.setItem(draftKey, JSON.stringify(activityData));
-      setAutoSaveKey(saveKey);
-      console.log("Auto-saved activity draft:", draftKey, activityData);
-
-      // If we have an activityId, also save to database
-      if (activityId && courseId) {
-        try {
-          const content = {
-            nodes: nodes.map((node) => ({
-              id: node.id,
-              type: node.type,
-              title: node.title,
-              description: node.description,
-              position: node.position,
-              config: node.config || {},
-            })),
-            connections: connections.map((conn) => ({
-              id: conn.id,
-              from: conn.from,
-              to: conn.to,
-            })),
-            workflow_type: "enhanced",
-            context_sources: selectedContextSources,
-          };
-
-          const response = await fetch("/api/activities", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              id: activityId,
-              course_id: courseId,
-              title: workflowTitle,
-              description: workflowDescription,
-              content: content,
-              activity_type: "interactive", // Use 'interactive' which exists in schema
-              is_adaptive: true,
-              // Removed columns that don't exist: activity_subtype, is_enhanced
-            }),
-          });
-
-          if (response.ok) {
-            console.log("Auto-saved to database successfully");
-          } else {
-            console.error(
-              "Auto-save to database failed:",
-              await response.text()
-            );
-          }
-        } catch (error) {
-          console.error("Error auto-saving to database:", error);
-        }
-      }
-    } catch (error) {
-      console.error("Auto-save failed:", error);
-    } finally {
-      setTimeout(() => setIsAutoSaving(false), 1000);
+    // IMPORTANT: Don't auto-save if we're currently generating questions
+    // This prevents database saves, EARL calls, and notifications during question generation
+    if (isGeneratingQuestionsRef.current.size > 0) {
+      console.log("⏸️ Auto-save skipped: questions are being generated");
+      return;
     }
+
+    // Clear existing timeout
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+
+    // Debounce auto-save by 2 seconds
+    autoSaveTimeoutRef.current = setTimeout(async () => {
+      // Double-check we're not generating questions before saving
+      if (isGeneratingQuestionsRef.current.size > 0) {
+        console.log("⏸️ Auto-save skipped: questions are being generated");
+        return;
+      }
+
+      if (isAutoSaving) return; // Prevent concurrent saves
+
+      setIsAutoSaving(true);
+      try {
+        const activityData = {
+          title: workflowTitle,
+          description: workflowDescription,
+          nodes,
+          connections,
+          courseId,
+          activityId,
+          context_sources: selectedContextSources,
+          lastSaved: new Date().toISOString(),
+        };
+
+        // Use consistent key based on activityId or courseId
+        const saveKey = activityId || autoSaveKey || `draft_${courseId}`;
+        const draftKey = `activity_draft_${saveKey}`;
+
+        localStorage.setItem(draftKey, JSON.stringify(activityData));
+        setAutoSaveKey(saveKey);
+
+        // If we have an activityId, also save to database
+        if (activityId && courseId) {
+          try {
+            const content = {
+              nodes: nodes.map((node) => ({
+                id: node.id,
+                type: node.type,
+                title: node.title,
+                description: node.description,
+                position: node.position,
+                config: node.config || {},
+              })),
+              connections: connections.map((conn) => ({
+                id: conn.id,
+                from: conn.from,
+                to: conn.to,
+              })),
+              workflow_type: "enhanced",
+              context_sources: selectedContextSources,
+            };
+
+            const response = await fetch("/api/activities", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                id: activityId,
+                course_id: courseId,
+                title: workflowTitle,
+                description: workflowDescription,
+                content: content,
+                activity_type: "interactive",
+                is_adaptive: true,
+              }),
+            });
+
+            if (!response.ok) {
+              console.error(
+                "Auto-save to database failed:",
+                await response.text()
+              );
+            }
+          } catch (error) {
+            console.error("Error auto-saving to database:", error);
+          }
+        }
+      } catch (error) {
+        console.error("Auto-save failed:", error);
+      } finally {
+        setTimeout(() => setIsAutoSaving(false), 1000);
+      }
+    }, 2000); // 2 second debounce
   };
 
   // Load draft on component mount (only if no initialContent provided)
@@ -557,23 +581,14 @@ export default function SimpleZapierBuilder({
     }
   }, [activityId, courseId, initialContent]);
 
-  // Debug selectedNode changes
+  // Cleanup timeout on unmount
   useEffect(() => {
-    console.log("selectedNode changed:", selectedNode);
-  }, [selectedNode]);
-
-  // Auto-save when nodes or connections change (debounced)
-  useEffect(() => {
-    // Don't auto-save on initial load
-    if (nodes.length === 0 && connections.length === 0) return;
-
-    const timeoutId = setTimeout(() => {
-      autoSave();
-    }, 2000); // Auto-save 2 seconds after last change
-
-    return () => clearTimeout(timeoutId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, connections, selectedContextSources]);
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Save state to history
   const saveToHistory = () => {
@@ -950,37 +965,37 @@ export default function SimpleZapierBuilder({
     autoSave();
   };
 
-  const updateNodeConfig = (nodeId: string, config: any) => {
-    console.log("Updating node config:", nodeId, config);
-    console.log("Current nodes before update:", nodes);
-
+  const updateNodeConfig = (
+    nodeId: string,
+    config: any,
+    skipAutoSave: boolean = false
+  ) => {
     const updatedNodes = nodes.map((node) => {
       if (node.id === nodeId) {
-        const updatedNode = {
+        return {
           ...node,
           config: { ...node.config, ...config },
         };
-        console.log("Updated node:", updatedNode);
-        return updatedNode;
       }
       return node;
     });
 
-    console.log("Updated nodes:", updatedNodes);
     setNodes(updatedNodes);
 
     // Update selectedNode if it's the same node
     if (selectedNode && selectedNode.id === nodeId) {
       const updatedSelectedNode = updatedNodes.find((n) => n.id === nodeId);
       if (updatedSelectedNode) {
-        console.log("Updating selectedNode:", updatedSelectedNode);
         setSelectedNode(updatedSelectedNode);
       }
     }
 
-    // Save to history and auto-save
+    // Save to history and auto-save (debounced)
+    // IMPORTANT: Skip auto-save when generating questions to prevent database saves, EARL, and notifications
     saveToHistory();
-    setTimeout(() => autoSave(), 100);
+    if (!skipAutoSave) {
+      autoSave();
+    }
   };
 
   const deleteNode = (nodeId: string) => {
@@ -1407,12 +1422,14 @@ export default function SimpleZapierBuilder({
         return sum + (nodePoints && nodePoints > 0 ? nodePoints : 0);
       }, 0);
 
-      // Calculate total estimated duration from nodes
+      // Calculate total estimated duration from nodes (skip duration for video nodes)
       const totalDuration = nodes.reduce((sum, node) => {
+        if (node.type === "video") {
+          // Video duration is calculated from the video itself, not config
+          return sum;
+        }
         const nodeDuration =
-          node.config?.duration ||
-          node.config?.estimated_time ||
-          node.config?.estimated_duration;
+          node.config?.estimated_time || node.config?.estimated_duration;
         return sum + (nodeDuration && nodeDuration > 0 ? nodeDuration : 0);
       }, 0);
 
@@ -1459,6 +1476,13 @@ export default function SimpleZapierBuilder({
                 ],
                 max_size_mb: 10,
                 google_cloud_upload: true,
+              }),
+              // Add auto-generated questions for video nodes
+              ...(node.type === "video" && {
+                auto_add_questions: node.config?.auto_add_questions || false,
+                auto_questions: node.config?.auto_questions || [],
+                question_timestamps: node.config?.question_timestamps || [],
+                key_concepts: node.config?.key_concepts || [],
               }),
             },
           })),
@@ -1518,6 +1542,13 @@ export default function SimpleZapierBuilder({
       }
 
       // Save to database
+      // IMPORTANT: This is where the activity is saved to the database.
+      // The /api/activities route will:
+      // 1. Save the activity to the database
+      // 2. Trigger EARL analysis (which generates captivating questions)
+      // 3. Create notifications for enrolled students
+      // This is the ONLY place where database saves, EARL, and notifications happen.
+      // Question generation (when toggling "generate questions") does NOT trigger any of this.
       console.log(
         `Saving activity to database - ${isUpdate ? "UPDATE" : "CREATE"}`,
         { courseId, lessonId, activityId: finalActivityId }
@@ -1560,6 +1591,9 @@ export default function SimpleZapierBuilder({
 
           // Update activityId if it was a new activity
           const savedActivityId = result.activity?.id || finalActivityId;
+
+          // Questions should already be generated when toggle was clicked
+          // Just save the current state (which includes any generated questions)
 
           // Save to localStorage as backup
           const activityKey = `activity_${savedActivityId}`;
@@ -2129,32 +2163,185 @@ export default function SimpleZapierBuilder({
                   Current value: {selectedNode.config.youtube_url || "empty"}
                 </p>
               </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-700">
-                  Duration (minutes)
-                </Label>
-                <Input
-                  type="number"
-                  value={selectedNode.config.duration ?? ""}
-                  onChange={(e) =>
-                    updateNodeConfig(selectedNode.id, {
-                      duration: e.target.value
-                        ? Number(e.target.value)
-                        : undefined,
-                    })
-                  }
-                  placeholder="Enter duration"
-                  className="mt-1"
-                />
-              </div>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={selectedNode.config.autoplay || false}
-                  onCheckedChange={(checked) =>
-                    updateNodeConfig(selectedNode.id, { autoplay: checked })
-                  }
-                />
-                <Label className="text-sm text-gray-600">Auto-play video</Label>
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={selectedNode.config.auto_add_questions || false}
+                    disabled={isGeneratingQuestions === selectedNode.id}
+                    onCheckedChange={async (checked) => {
+                      // IMPORTANT: Skip auto-save when toggling question generation to prevent database saves, EARL, and notifications
+                      updateNodeConfig(
+                        selectedNode.id,
+                        {
+                          auto_add_questions: checked,
+                        },
+                        true
+                      ); // skipAutoSave=true to prevent database save
+
+                      // If enabling, generate questions immediately
+                      // IMPORTANT: This only generates questions and stores them in local state.
+                      // Questions are NOT saved to database, EARL is NOT called, and notifications are NOT created.
+                      // Questions will only be saved when the user clicks "Complete & Get URL" to create the activity.
+                      if (checked && selectedNode.config.youtube_url) {
+                        // Check if questions already exist
+                        if (
+                          selectedNode.config.has_auto_questions &&
+                          selectedNode.config.auto_questions?.length > 0
+                        ) {
+                          console.log(
+                            "✅ Questions already generated for this video"
+                          );
+                          return;
+                        }
+
+                        // IMPORTANT: Set ref BEFORE any async operations to prevent auto-save
+                        console.log(
+                          "🚫 Setting question generation flag to prevent auto-save/EARL"
+                        );
+                        isGeneratingQuestionsRef.current.add(selectedNode.id);
+                        setIsGeneratingQuestions(selectedNode.id);
+
+                        try {
+                          console.log(
+                            "🎬 Generating questions for video:",
+                            selectedNode.config.youtube_url
+                          );
+
+                          const response = await fetch(
+                            "/api/ai/generate-video-questions",
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                youtube_url: selectedNode.config.youtube_url,
+                              }),
+                            }
+                          );
+
+                          if (response.ok) {
+                            const data = await response.json();
+
+                            if (
+                              data.success &&
+                              data.questions &&
+                              data.questions.length > 0
+                            ) {
+                              // Update the video node config with questions (local state only, no database save)
+                              // IMPORTANT: skipAutoSave=true prevents auto-save which would trigger database save, EARL, and notifications
+                              updateNodeConfig(
+                                selectedNode.id,
+                                {
+                                  auto_questions: data.questions,
+                                  question_timestamps: data.questions.map(
+                                    (q: any) => q.timestamp
+                                  ),
+                                  key_concepts: data.key_concepts || [],
+                                  has_auto_questions: true,
+                                },
+                                true
+                              ); // skipAutoSave=true to prevent database save
+
+                              console.log(
+                                `✅ Generated ${data.questions.length} questions for video (not saved yet)`
+                              );
+                            } else {
+                              const errorMsg =
+                                data.error ||
+                                "Unable to generate questions. The video may not have captions available.";
+                              alert(
+                                `❌ ${errorMsg}\n\nPlease ensure the video has captions enabled, or try a different video.`
+                              );
+                            }
+                          } else {
+                            const errorData = await response
+                              .json()
+                              .catch(() => ({
+                                error: `HTTP ${response.status}`,
+                              }));
+                            alert(
+                              `❌ Failed to generate questions: ${
+                                errorData.error || "Unknown error"
+                              }`
+                            );
+                          }
+                        } catch (error: any) {
+                          console.error(
+                            "❌ Error generating questions:",
+                            error
+                          );
+                          alert(
+                            `Error generating questions: ${
+                              error?.message || "Unknown error"
+                            }`
+                          );
+                        } finally {
+                          setIsGeneratingQuestions(null);
+                          isGeneratingQuestionsRef.current.delete(
+                            selectedNode.id
+                          );
+                        }
+                      } else if (!checked) {
+                        // If disabling, clear questions from config (local state only)
+                        // IMPORTANT: skipAutoSave=true prevents auto-save which would trigger database save, EARL, and notifications
+                        updateNodeConfig(
+                          selectedNode.id,
+                          {
+                            auto_questions: [],
+                            question_timestamps: [],
+                            key_concepts: [],
+                            has_auto_questions: false,
+                          },
+                          true
+                        ); // skipAutoSave=true to prevent database save
+                      }
+                    }}
+                  />
+                  <Label className="text-sm font-medium text-gray-700">
+                    Automatically add questions
+                  </Label>
+                </div>
+                <p className="text-xs text-gray-500 ml-8">
+                  Analyzes transcript and adds questions at optimal learning
+                  points
+                </p>
+                {isGeneratingQuestions === selectedNode.id && (
+                  <div className="ml-8 mt-2 p-3 bg-yellow-50 dark:bg-yellow-950/20 rounded-md">
+                    <p className="text-xs text-yellow-800 dark:text-yellow-200">
+                      ⏳ Generating questions... This may take a moment.
+                    </p>
+                  </div>
+                )}
+                {selectedNode.config.auto_questions &&
+                  selectedNode.config.auto_questions.length > 0 && (
+                    <div className="ml-8 mt-2 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-md">
+                      <p className="text-xs font-medium text-blue-900 dark:text-blue-100 mb-2">
+                        Generated {selectedNode.config.auto_questions.length}{" "}
+                        questions:
+                      </p>
+                      <div className="space-y-2">
+                        {selectedNode.config.auto_questions
+                          .slice(0, 3)
+                          .map((q: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className="text-xs text-blue-800 dark:text-blue-200"
+                            >
+                              <span className="font-medium">
+                                @{Math.floor((q.timestamp || 0) / 60)}:
+                                {(q.timestamp || 0) % 60}
+                              </span>{" "}
+                              - {q.question}
+                            </div>
+                          ))}
+                        {selectedNode.config.auto_questions.length > 3 && (
+                          <p className="text-xs text-blue-700 dark:text-blue-300">
+                            +{selectedNode.config.auto_questions.length - 3}{" "}
+                            more questions
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
               </div>
               <div>
                 <Label className="text-sm font-medium text-gray-700">

@@ -1,41 +1,32 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
-import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
+import genAI from "@/lib/genai";
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createServerClient();
-
-    // Authentication is OPTIONAL for student-side play
-    // If no user, we continue in anonymous mode and skip DB writes that require a user
     const {
       data: { user },
     } = await supabase.auth.getUser();
 
-    // Parse request body
     const body = await request.json();
     const {
-      // Original structured payload (teacher/assignment flow)
       activity_id,
       session_id,
       message,
-      chat_history,
-      learning_objectives,
-      concepts_mastered,
-      concepts_struggling,
-      context_sources,
+      chat_history = [],
+      learning_objectives = [],
+      concepts_mastered = [],
+      concepts_struggling = [],
+      context_sources = [],
+      learning_style = "visual",
+      performance_history = [],
+      current_phase = "instruction",
+    } = body;
 
-      // Flexible payload from EnhancedActivityPlayer
-      context, // alias for context_sources
-      nodeConfig,
-      performanceHistory,
-    } = body || {};
-
-    // Try to fetch activity for richer context, if provided
     let activity: any = null;
     if (activity_id) {
-      const { data: a, error: activityError } = await supabase
+      const { data: a } = await supabase
         .from("activities")
         .select(
           `
@@ -46,117 +37,135 @@ export async function POST(request: NextRequest) {
         )
         .eq("id", activity_id)
         .single();
-      if (!activityError && a) activity = a;
+      if (a) activity = a;
     }
 
-    // Build context for AI with additional sources
-    let contextSources = "";
-    const mergedContextSources = Array.isArray(context_sources)
-      ? context_sources
-      : Array.isArray(context)
-      ? context
+    const activityTitle = activity?.title || "Activity";
+    const activitySubject = activity?.courses?.subject || "subject";
+    const activityGrade = activity?.courses?.grade_level || "grade";
+    const learningObjectivesList = Array.isArray(learning_objectives)
+      ? learning_objectives
+      : Array.isArray(activity?.lessons?.learning_objectives)
+      ? activity.lessons.learning_objectives
       : [];
-    if (mergedContextSources && mergedContextSources.length > 0) {
-      contextSources = "\n\nAdditional Context Sources:\n";
-      for (const source of mergedContextSources) {
-        if (source.type === "pdf") {
-          contextSources += `- PDF Document: ${
-            source.title || source.filename
-          }\n`;
-          if (source.summary) {
-            contextSources += `  Summary: ${source.summary}\n`;
-          }
-          if (source.key_points) {
-            contextSources += `  Key Points: ${source.key_points.join(", ")}\n`;
-          }
-        } else if (source.type === "youtube") {
-          contextSources += `- YouTube Video: ${source.title || "Video"}\n`;
-          if (source.url) {
-            contextSources += `  URL: ${source.url}\n`;
-          }
-          if (source.summary) {
-            contextSources += `  Summary: ${source.summary}\n`;
-          }
-          if (source.key_concepts) {
-            contextSources += `  Key Concepts: ${source.key_concepts.join(
-              ", "
-            )}\n`;
-          }
+
+    const masteredList = Array.isArray(concepts_mastered) ? concepts_mastered : [];
+    const strugglingList = Array.isArray(concepts_struggling) ? concepts_struggling : [];
+
+    const recentPerformance = Array.isArray(performance_history) ? performance_history.slice(-5) : [];
+    const avgPerformance = recentPerformance.length > 0
+      ? recentPerformance.reduce((sum: number, p: any) => sum + (p.score || 70), 0) / recentPerformance.length
+      : 70;
+
+    let contextSourcesText = "";
+    if (context_sources && context_sources.length > 0) {
+      for (const source of context_sources) {
+        if (source.type === "pdf" && source.summary) {
+          contextSourcesText += `\nPDF: ${source.summary.substring(0, 500)}\n`;
+        } else if (source.type === "youtube" && source.summary) {
+          contextSourcesText += `\nVideo: ${source.summary.substring(0, 500)}\n`;
         }
       }
     }
 
-    const activityTitle = activity?.title || nodeConfig?.title || "Activity";
-    const activitySubject = activity?.courses?.subject || "subject";
-    const activityGrade = activity?.courses?.grade_level || "grade";
-    const learningObjectivesList: string[] = Array.isArray(learning_objectives)
-      ? learning_objectives
-      : Array.isArray(activity?.lessons?.learning_objectives)
-      ? activity.lessons.learning_objectives
-      : Array.isArray(nodeConfig?.learning_objectives)
-      ? nodeConfig.learning_objectives
-      : [];
-    const masteredList: string[] = Array.isArray(concepts_mastered)
-      ? concepts_mastered
-      : [];
-    const strugglingList: string[] = Array.isArray(concepts_struggling)
-      ? concepts_struggling
-      : [];
+    const systemPrompt = `You are a focused AI tutor teaching photosynthesis. Your goal: assess the student's knowledge and teach them effectively.
 
-    const systemPrompt = `You are an AI tutor helping a student with "${activityTitle}" in ${activitySubject} for ${activityGrade}.
+Key Concepts: Photosynthesis, chlorophyll, light reactions, Calvin cycle, glucose production, oxygen release.
 
-Learning Objectives:
-${learningObjectivesList
-  .map((obj: string, i: number) => `${i + 1}. ${obj}`)
-  .join("\n")}
+Student Status:
+- Mastered: ${masteredList.join(", ") || "None"}
+- Struggling: ${strugglingList.join(", ") || "None"}
+- Performance: ${avgPerformance.toFixed(0)}%
+${contextSourcesText}
 
-Concepts Already Mastered: ${masteredList.join(", ") || "None yet"}
-Concepts Student is Struggling With: ${
-      strugglingList.join(", ") || "None identified"
-    }${contextSources}
+Teaching Approach:
+1. Ask targeted questions to assess understanding
+2. Explain concepts simply and clearly
+3. Use examples and analogies
+4. Check comprehension before moving on
+5. Be concise - avoid unnecessary words
+6. Use diagrams when helpful (\`\`\`diagram blocks)
 
-Your role:
-- Be encouraging and supportive
-- Explain concepts clearly at the appropriate grade level
-- Ask probing questions to check understanding
-- Provide examples and analogies
-- Use the additional context sources to provide more relevant and specific examples
-- Reference specific content from PDFs or videos when relevant
-- Identify when the student has mastered a concept
-- Identify when the student is struggling and needs more help
-- Award points when concepts are mastered (10-50 points per concept)
+Keep responses short, clear, and focused on learning.`;
 
-Student's latest message: "${message}"
+    if (!process.env.GOOGLE_AI_API_KEY) {
+      return NextResponse.json(
+        { error: "API key not configured", response: "I'm having trouble connecting. Please check the configuration." },
+        { status: 500 }
+      );
+    }
 
-Respond helpfully and educationally. If the student demonstrates mastery of a new concept, acknowledge it clearly. Use the provided context sources to give more specific and relevant examples.`;
+    console.log("✅ AI Chat: Google AI API key found");
+    console.log("✅ AI Chat: Using model: gemini-2.0-flash-lite");
 
-    // Generate AI response
-    const { text } = await generateText({
-      model: google("gemini-1.5-flash"),
-      prompt: `${systemPrompt}\n\nStudent's latest message: "${message || ""}"`,
-      maxTokens: 500,
+    const config = {
+      responseMimeType: "text/plain",
+      maxOutputTokens: 500,
+      systemInstruction: [
+        {
+          text: systemPrompt,
+        },
+      ],
+    };
+
+    const safeHistory = Array.isArray(chat_history) ? chat_history : [];
+    const contents = [
+      ...safeHistory.map((msg: any) => ({
+        role: msg.role || (msg.type === "student" ? "user" : "assistant"),
+        text: msg.content || msg.text || msg.message || "",
+      })),
+      {
+        role: "user",
+        text: message,
+      },
+    ];
+
+    console.log("🤖 AI Chat: Calling Google AI...");
+    const response = await genAI.models.generateContentStream({
+      model: "gemini-2.0-flash-lite",
+      config,
+      contents,
     });
+    console.log("✅ AI Chat: Response stream received");
 
-    // Analyze the conversation to update concept mastery
-    const analysisPrompt = `Based on this conversation, analyze the student's understanding:
+    let fullText = "";
+    for await (const chunk of response) {
+      if (chunk.text) {
+        fullText += chunk.text;
+      }
+    }
+    console.log("✅ AI Chat: Full response collected");
 
-Learning Objectives: ${learningObjectivesList.join(", ")}
-Previously Mastered: ${masteredList.join(", ")}
-Previously Struggling: ${strugglingList.join(", ")}
+    const diagrams: Array<{ type: string; code: string; language?: string }> = [];
+    let cleanedText = fullText;
 
-Student's message: "${message}"
-AI response: "${text}"
+    const diagramRegex = /```diagram\s*\n?([\s\S]*?)```/g;
+    let match;
+    while ((match = diagramRegex.exec(fullText)) !== null) {
+      const code = match[1].trim();
+      let type = "svg";
+      if (code.includes("mermaid") || code.startsWith("graph") || code.startsWith("flowchart")) {
+        type = "mermaid";
+      } else if (code.includes("<canvas") || code.includes("getContext")) {
+        type = "canvas";
+      }
+      diagrams.push({ type, code, language: type });
+      cleanedText = cleanedText.replace(match[0], `[Diagram ${diagrams.length}]`);
+    }
 
-Return a JSON object with:
+    const analysisPrompt = `Assess the student's understanding of photosynthesis from this conversation:
+
+Student: "${message}"
+AI: "${cleanedText}"
+
+Return JSON:
 {
-  "concepts_mastered": ["list of all concepts the student has now mastered"],
-  "concepts_struggling": ["list of concepts the student is struggling with"],
-  "concepts_addressed": ["concepts discussed in this exchange"],
-  "points_earned": 0-50 (points to award if new concepts were mastered),
-  "mastery_explanation": "brief explanation of what was learned"
-}
-
-Only include concepts from the learning objectives list.`;
+  "concepts_mastered": ["photosynthesis concepts the student now understands"],
+  "concepts_struggling": ["photosynthesis concepts the student is struggling with"],
+  "concepts_addressed": ["photosynthesis concepts discussed"],
+  "points_earned": 0-50,
+  "mastery_explanation": "brief assessment of their photosynthesis knowledge"
+}`;
 
     let analysisResult = {
       concepts_mastered: masteredList,
@@ -167,32 +176,42 @@ Only include concepts from the learning objectives list.`;
     };
 
     try {
-      const { text: analysisText } = await generateText({
-        model: google("gemini-1.5-flash"),
-        prompt: analysisPrompt,
-        maxTokens: 300,
+      const analysisConfig = {
+        responseMimeType: "text/plain",
+        maxOutputTokens: 500,
+      };
+
+      const analysisResponse = await genAI.models.generateContentStream({
+        model: "gemini-2.0-flash-lite",
+        config: analysisConfig,
+        contents: [
+          {
+            role: "user",
+            text: analysisPrompt,
+          },
+        ],
       });
 
-      const parsed = JSON.parse(analysisText);
-      analysisResult = { ...analysisResult, ...parsed };
+      let analysisText = "";
+      for await (const chunk of analysisResponse) {
+        if (chunk.text) {
+          analysisText += chunk.text;
+        }
+      }
+
+      const jsonMatch = analysisText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        analysisResult = { ...analysisResult, ...JSON.parse(jsonMatch[0]) };
+      }
     } catch (error) {
-      console.error("Analysis parsing error:", error);
-      // Continue with default values
+      // Continue with defaults
     }
 
-    // Update chat session
-    // If a session is provided and we have an authenticated user, update the DB
     if (session_id && user) {
-      const safeHistory = Array.isArray(chat_history) ? chat_history : [];
       const updatedHistory = [
         ...safeHistory,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: text,
-          timestamp: new Date().toISOString(),
-          concepts_addressed: analysisResult.concepts_addressed,
-        },
+        { role: "user", content: message },
+        { role: "assistant", content: fullText },
       ];
 
       await supabase
@@ -201,12 +220,10 @@ Only include concepts from the learning objectives list.`;
           chat_history: updatedHistory,
           concepts_mastered: analysisResult.concepts_mastered,
           concepts_struggling: analysisResult.concepts_struggling,
-          total_messages: updatedHistory.length,
         })
         .eq("id", session_id);
     }
 
-    // Award points if concepts were mastered
     if (analysisResult.points_earned > 0 && user && activity) {
       await supabase.from("student_points").upsert(
         {
@@ -216,45 +233,60 @@ Only include concepts from the learning objectives list.`;
           lesson_id: activity.lesson_id,
           points_earned: analysisResult.points_earned,
         },
-        {
-          onConflict: "student_id,activity_id",
-          ignoreDuplicates: false,
-        }
+        { onConflict: "student_id,activity_id", ignoreDuplicates: false }
       );
-
-      // Update learning objective progress
-      for (const concept of analysisResult.concepts_mastered) {
-        if (!masteredList.includes(concept)) {
-          await supabase.from("learning_objective_progress").upsert(
-            {
-              student_id: user.id,
-              course_id: activity.course_id,
-              lesson_id: activity.lesson_id,
-              learning_objective: concept,
-              mastery_level: 100,
-              attempts: 1,
-            },
-            {
-              onConflict: "student_id,course_id,lesson_id,learning_objective",
-            }
-          );
-        }
-      }
     }
 
-    // Map to include performanceScore for EnhancedActivityPlayer compatibility
+    const newMastery = (analysisResult.concepts_mastered || []).filter(
+      (c: string) => !masteredList.includes(c)
+    );
+
+    const adaptiveRouting = {
+      next_phase: avgPerformance >= 85 && newMastery.length > 0 ? "mastery" : avgPerformance < 60 ? "practice" : "quiz",
+      suggested_actions: avgPerformance >= 85 ? ["Advanced concepts"] : avgPerformance < 60 ? ["Review basics"] : ["Assess understanding"],
+      should_advance: newMastery.length > 0 && avgPerformance >= 70,
+      should_review: avgPerformance < 60,
+    };
+
     return NextResponse.json({
-      response: text,
-      ...analysisResult,
-      performanceScore:
-        typeof analysisResult.points_earned === "number"
-          ? Math.min(100, Math.max(0, analysisResult.points_earned * 2))
-          : 70,
+      response: cleanedText,
+      diagrams,
+      concepts_mastered: analysisResult.concepts_mastered,
+      concepts_struggling: analysisResult.concepts_struggling,
+      concepts_addressed: analysisResult.concepts_addressed,
+      points_earned: analysisResult.points_earned,
+      mastery_explanation: analysisResult.mastery_explanation,
+      adaptive_routing: adaptiveRouting,
+      performanceScore: avgPerformance,
     });
-  } catch (error) {
-    console.error("AI Chat API error:", error);
+  } catch (error: any) {
+    console.error("❌ AI Chat API error:", error);
+    console.error("❌ Error name:", error?.name);
+    console.error("❌ Error message:", error?.message);
+    console.error("❌ Error code:", error?.code);
+    console.error("❌ Error status:", error?.status);
+    console.error("❌ Error stack:", error?.stack);
+    if (error?.responseBody) {
+      console.error("❌ Error response body:", error.responseBody);
+    }
+    if (error?.data) {
+      console.error("❌ Error data:", error.data);
+    }
+    if (error?.cause) {
+      console.error("❌ Error cause:", error.cause);
+    }
+    
     return NextResponse.json(
-      { error: "Internal server error" },
+      { 
+        error: error?.message || "Internal server error", 
+        response: "I apologize, but I encountered an error. Please try again.",
+        details: process.env.NODE_ENV === "development" ? {
+          message: error?.message,
+          code: error?.code,
+          status: error?.status,
+          name: error?.name,
+        } : undefined,
+      },
       { status: 500 }
     );
   }

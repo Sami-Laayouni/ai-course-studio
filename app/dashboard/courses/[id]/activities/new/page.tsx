@@ -199,6 +199,8 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
           .update(activityData)
           .eq("id", activityId);
         if (error) throw error;
+        
+        // Earl analysis is automatically triggered by the API route, no need to call it again
       } else {
         // Create new
         const { data, error } = await supabase
@@ -208,6 +210,8 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
           .single();
         if (error) throw error;
         setActivityId(data.id);
+        
+        // Earl analysis is automatically triggered by the API route, no need to call it again
       }
 
       router.push(`/dashboard/courses/${courseId}`);

@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
-import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
+import genAI from "@/lib/genai";
 
 export async function POST(request: NextRequest) {
   try {
@@ -88,11 +87,35 @@ Return a JSON object with this exact structure:
 Make sure the question is engaging and tests real understanding, not just memorization.`;
 
     // Generate AI response
-    const { text } = await generateText({
-      model: google("gemini-1.5-flash"),
-      prompt: context,
-      maxTokens: 500,
+    if (!process.env.GOOGLE_AI_API_KEY) {
+      return NextResponse.json(
+        { error: "API key not configured" },
+        { status: 500 }
+      );
+    }
+
+    const config = {
+      responseMimeType: "text/plain",
+      maxOutputTokens: 500,
+    };
+
+    const response = await genAI.models.generateContentStream({
+      model: "gemini-2.0-flash-lite",
+      config,
+      contents: [
+        {
+          role: "user",
+          text: context,
+        },
+      ],
     });
+
+    let text = "";
+    for await (const chunk of response) {
+      if (chunk.text) {
+        text += chunk.text;
+      }
+    }
 
     try {
       const parsed = JSON.parse(text);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { runEarlAnalysis } from "@/lib/earl-analyzer";
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,9 +47,12 @@ export async function POST(request: NextRequest) {
       // Removed columns that don't exist: activity_subtype, is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking
       // collaboration_settings might not exist either, so we'll only add it if it's provided
     };
-    
+
     // Only add collaboration_settings if it exists and is provided
-    if (collaboration_settings && Object.keys(collaboration_settings).length > 0) {
+    if (
+      collaboration_settings &&
+      Object.keys(collaboration_settings).length > 0
+    ) {
       // Check if column exists before adding - if it doesn't exist, just skip it
       // activityData.collaboration_settings = collaboration_settings;
     }
@@ -82,10 +86,46 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log("Activity created successfully:", activity);
+    // Earl: Intelligent Activity Analyzer
+    // Automatically fetch context and generate captivating question
+    // Only run if activity doesn't already have a question
+    const contentObj = activity.content || {};
+
+    // Check database again to be sure (prevent race conditions)
+    const { data: latestActivity } = await supabase
+      .from("activities")
+      .select("content")
+      .eq("id", activity.id)
+      .single();
+
+    const latestContent = latestActivity?.content || contentObj;
+
+    if (!latestContent.earl_generated || !latestContent.captivating_question) {
+      // Run Earl analysis asynchronously (don't block activity creation)
+      // Use longer delay to prevent race conditions and concurrent calls
+      setTimeout(() => {
+        runEarlAnalysis(activity, supabase).catch((error) => {
+          console.error("Earl: Error in activity analysis:", error);
+        });
+      }, 2000); // Increased delay to prevent concurrent calls
+    } else {
+      console.log(
+        "Earl: Skipping - question already exists for activity",
+        activity.id
+      );
+    }
+
+    // Fetch the updated activity with the question
+    const { data: updatedActivity } = await supabase
+      .from("activities")
+      .select("*")
+      .eq("id", activity.id)
+      .single();
+
+    console.log("Activity created successfully:", updatedActivity || activity);
     return NextResponse.json({
       success: true,
-      activity,
+      activity: updatedActivity || activity,
       message: "Activity created successfully",
     });
   } catch (error) {
@@ -138,10 +178,13 @@ export async function PUT(request: NextRequest) {
     if (activity_type !== undefined) activityData.activity_type = activity_type;
     // Removed: activity_subtype (doesn't exist)
     if (order_index !== undefined) activityData.order_index = order_index;
-    if (estimated_duration !== undefined) activityData.estimated_duration = estimated_duration;
-    if (difficulty_level !== undefined) activityData.difficulty_level = difficulty_level;
+    if (estimated_duration !== undefined)
+      activityData.estimated_duration = estimated_duration;
+    if (difficulty_level !== undefined)
+      activityData.difficulty_level = difficulty_level;
     if (is_adaptive !== undefined) activityData.is_adaptive = is_adaptive;
-    if (is_collaborative !== undefined) activityData.is_collaborative = is_collaborative;
+    if (is_collaborative !== undefined)
+      activityData.is_collaborative = is_collaborative;
     // Removed: is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking (don't exist)
     if (points !== undefined) activityData.points = points;
     if (lesson_id !== undefined) activityData.lesson_id = lesson_id;
@@ -160,6 +203,81 @@ export async function PUT(request: NextRequest) {
         { error: "Failed to update activity", details: error.message },
         { status: 500 }
       );
+    }
+
+    // Run Earl analysis on update (in case content changed)
+    // Only run if activity doesn't already have a question
+    const contentObj = activity.content || {};
+
+    // Check database again to be sure (prevent race conditions)
+    const { data: latestActivity } = await supabase
+      .from("activities")
+      .select("content")
+      .eq("id", activity.id)
+      .single();
+
+    const latestContent = latestActivity?.content || contentObj;
+
+    if (!latestContent.earl_generated || !latestContent.captivating_question) {
+      // Use longer delay to prevent race conditions and concurrent calls
+      setTimeout(() => {
+        runEarlAnalysis(activity, supabase).catch((error) => {
+          console.error("Earl: Error in activity analysis:", error);
+        });
+      }, 2000); // Increased delay to prevent concurrent calls
+    } else {
+      console.log(
+        "Earl: Skipping - question already exists for activity",
+        activity.id
+      );
+    }
+
+    // Create notifications for enrolled students after activity is saved
+    // Only create if activity has a captivating question
+    if (latestContent.captivating_question && activity.course_id) {
+      try {
+        const { data: enrollments } = await supabase
+          .from("enrollments")
+          .select("student_id")
+          .eq("course_id", activity.course_id);
+
+        if (enrollments && enrollments.length > 0) {
+          // Check if notifications already exist for this activity
+          const { data: existingNotifications } = await supabase
+            .from("notifications")
+            .select("id")
+            .eq("type", "activity")
+            .eq("data->>activity_id", activity.id)
+            .limit(1);
+
+          // Only create notifications if they don't already exist
+          if (!existingNotifications || existingNotifications.length === 0) {
+            const notifications = enrollments.map((enrollment: any) => ({
+              user_id: enrollment.student_id,
+              type: "activity",
+              title: `New Activity: ${activity.title}`,
+              message: latestContent.captivating_question,
+              data: {
+                activity_id: activity.id,
+                course_id: activity.course_id,
+                lesson_id: activity.lesson_id || null,
+                captivating_question: latestContent.captivating_question,
+              },
+              priority: "normal",
+            }));
+
+            await supabase.from("notifications").insert(notifications);
+            console.log(
+              `✅ Created ${notifications.length} notifications for enrolled students after activity save`
+            );
+          }
+        }
+      } catch (notificationError) {
+        console.error(
+          "Error creating notifications after activity save:",
+          notificationError
+        );
+      }
     }
 
     console.log("Activity updated successfully:", activity);

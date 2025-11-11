@@ -25,6 +25,7 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
+import { NotificationManager } from "@/components/student/notification-manager";
 
 export default async function StudentLearnPage() {
   const supabase = await createClient();
@@ -376,10 +377,11 @@ export default async function StudentLearnPage() {
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8">
         {/* Header */}
-        <div className="mb-8">
+        <div className="mb-8 flex items-center justify-between">
           <h1 className="text-3xl font-bold text-foreground">
             Welcome, {profile?.full_name || "Student"}!
           </h1>
+          <NotificationManager />
         </div>
 
         {/* Assigned Activities Section */}
@@ -410,6 +412,8 @@ export default async function StudentLearnPage() {
                     const isCompleted = progress?.status === "completed";
                     const isInProgress = progress?.status === "in_progress";
 
+                    const captivatingQuestion = activity.content?.captivating_question;
+                    
                     return (
                       <div
                         key={activity.id}
@@ -426,6 +430,13 @@ export default async function StudentLearnPage() {
                                 <div className="h-4 w-4 rounded-full border-2 border-blue-600 border-t-transparent animate-spin" />
                               )}
                             </div>
+                            {captivatingQuestion && (
+                              <div className="mb-2 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-md border-l-4 border-blue-500">
+                                <p className="text-sm font-medium text-blue-900 dark:text-blue-100">
+                                  💡 {captivatingQuestion}
+                                </p>
+                              </div>
+                            )}
                             {activity.description && (
                               <p className="text-sm text-muted-foreground line-clamp-2">
                                 {activity.description}

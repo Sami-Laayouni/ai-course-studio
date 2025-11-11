@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import ytdl from "ytdl-core";
+import { YoutubeTranscript } from "youtube-transcript";
 
 export async function POST(request: NextRequest) {
   try {
@@ -22,42 +23,101 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get video info
-    const videoInfo = await ytdl.getInfo(url);
-    const videoDetails = videoInfo.videoDetails;
+    // Extract video ID from URL
+    const videoIdMatch = url.match(/(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/);
+    const videoId = videoIdMatch ? videoIdMatch[1] : null;
+    
+    if (!videoId) {
+      return NextResponse.json(
+        { error: "Invalid YouTube URL format" },
+        { status: 400 }
+      );
+    }
 
-    // Extract transcript if available
+    // Get video info
+    let videoInfo: any = null;
+    let videoDetails: any = null;
+    
+    try {
+      videoInfo = await ytdl.getInfo(url);
+      videoDetails = videoInfo.videoDetails;
+    } catch (ytdlError: any) {
+      console.error("Error getting video info:", ytdlError);
+      // Try oEmbed as fallback
+      try {
+        const oEmbedUrl = `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`;
+        const oEmbedResponse = await fetch(oEmbedUrl);
+        const oEmbedData = await oEmbedResponse.json();
+        
+        if (oEmbedData) {
+          videoDetails = {
+            title: oEmbedData.title || "Video",
+            description: oEmbedData.description || "",
+            videoId: videoId,
+            lengthSeconds: "0",
+            thumbnails: [{ url: oEmbedData.thumbnail_url }],
+          };
+        }
+      } catch (oEmbedError) {
+        console.error("oEmbed also failed:", oEmbedError);
+      }
+      
+      if (!videoDetails) {
+        return NextResponse.json(
+          { error: "Failed to fetch video information" },
+          { status: 500 }
+        );
+      }
+    }
+
+    // Extract transcript using youtube-transcript
     let transcript = "";
     let keyPoints: string[] = [];
     let keyConcepts: string[] = [];
 
     try {
-      // Try to get transcript
-      const captions =
-        videoInfo.player_response.captions?.playerCaptionsTracklistRenderer
-          ?.captionTracks;
-      if (captions && captions.length > 0) {
-        const transcriptUrl = captions[0].baseUrl;
-        const transcriptResponse = await fetch(transcriptUrl);
-        const transcriptData = await transcriptResponse.text();
-
-        // Parse transcript XML
-        const transcriptMatch = transcriptData.match(
-          /<text[^>]*>([^<]*)<\/text>/g
-        );
-        if (transcriptMatch) {
-          transcript = transcriptMatch
-            .map((match) => match.replace(/<[^>]*>/g, ""))
-            .join(" ")
-            .replace(/&amp;/g, "&")
-            .replace(/&lt;/g, "<")
-            .replace(/&gt;/g, ">")
-            .replace(/&quot;/g, '"')
-            .replace(/&#39;/g, "'");
-        }
+      console.log("📝 Fetching transcript using youtube-transcript...");
+      const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId);
+      
+      if (transcriptItems && transcriptItems.length > 0) {
+        transcript = transcriptItems.map(item => item.text).join(" ");
+        console.log(`✅ Transcript extracted: ${transcript.length} characters`);
       }
-    } catch (error) {
-      console.error("Error extracting transcript:", error);
+    } catch (transcriptError: any) {
+      console.error("❌ Error fetching transcript with youtube-transcript:", transcriptError?.message);
+      
+      // Fallback: Try to get transcript from ytdl if available
+      try {
+        if (videoInfo?.player_response?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+          const captions =
+            videoInfo.player_response.captions.playerCaptionsTracklistRenderer
+              .captionTracks;
+          if (captions && captions.length > 0) {
+            console.log("📝 Trying fallback: extracting transcript from ytdl captions...");
+            const transcriptUrl = captions[0].baseUrl;
+            const transcriptResponse = await fetch(transcriptUrl);
+            const transcriptData = await transcriptResponse.text();
+
+            // Parse transcript XML
+            const transcriptMatch = transcriptData.match(
+              /<text[^>]*>([^<]*)<\/text>/g
+            );
+            if (transcriptMatch) {
+              transcript = transcriptMatch
+                .map((match) => match.replace(/<[^>]*>/g, ""))
+                .join(" ")
+                .replace(/&amp;/g, "&")
+                .replace(/&lt;/g, "<")
+                .replace(/&gt;/g, ">")
+                .replace(/&quot;/g, '"')
+                .replace(/&#39;/g, "'");
+              console.log(`✅ Transcript extracted via fallback: ${transcript.length} characters`);
+            }
+          }
+        }
+      } catch (fallbackError) {
+        console.error("❌ Fallback transcript extraction also failed:", fallbackError);
+      }
     }
 
     // If no transcript, use description and title for context
@@ -104,8 +164,8 @@ export async function POST(request: NextRequest) {
       user_id: user.id,
       activity_id: activityId,
       node_id: nodeId,
-      thumbnail: videoDetails.thumbnails?.[0]?.url,
-      duration: parseInt(videoDetails.lengthSeconds),
+      thumbnail: videoDetails.thumbnails?.[0]?.url || null,
+      duration: parseInt(videoDetails.lengthSeconds || "0"),
       created_at: new Date().toISOString(),
     });
 
@@ -126,8 +186,8 @@ export async function POST(request: NextRequest) {
         transcript,
         keyPoints,
         keyConcepts,
-        thumbnail: videoDetails.thumbnails?.[0]?.url,
-        duration: parseInt(videoDetails.lengthSeconds),
+        thumbnail: videoDetails.thumbnails?.[0]?.url || null,
+        duration: parseInt(videoDetails.lengthSeconds || "0"),
         description: videoDetails.description,
       },
     });
