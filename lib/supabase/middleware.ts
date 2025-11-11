@@ -13,6 +13,14 @@ export async function updateSession(request: NextRequest) {
       return supabaseResponse;
     }
 
+    // IMPORTANT: Skip session refresh for auth callback routes
+    // The callback page needs to handle the auth code/verifier itself
+    // If we call getUser() here, it will interfere with the PKCE flow
+    // and cause "both auth code and code verifier should be non-empty" error
+    if (request.nextUrl.pathname === '/auth/callback') {
+      return supabaseResponse;
+    }
+
     // With Fluid compute, don't put this client in a global environment
     // variable. Always create a new one on each request.
     const supabase = createServerClient(
