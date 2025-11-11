@@ -42,13 +42,17 @@ export default function SignupPage() {
 
     try {
       // First, sign up the user
+      // Use production URL if available, otherwise use current origin
+      const redirectUrl = 
+        process.env.NEXT_PUBLIC_APP_URL || 
+        process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ||
+        window.location.origin;
+      
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          emailRedirectTo:
-            process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ||
-            `${window.location.origin}/dashboard`,
+          emailRedirectTo: `${redirectUrl}/auth/callback?next=/dashboard`,
           data: {
             full_name: fullName,
             role: role,
