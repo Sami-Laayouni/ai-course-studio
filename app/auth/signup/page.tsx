@@ -48,6 +48,9 @@ export default function SignupPage() {
         process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ||
         window.location.origin;
       
+      console.log("Signing up user with email:", email);
+      console.log("Redirect URL:", `${redirectUrl}/auth/callback?next=/dashboard`);
+      
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
@@ -61,7 +64,25 @@ export default function SignupPage() {
         },
       });
 
-      if (authError) throw authError;
+      console.log("Signup response:", { 
+        user: authData?.user ? "User created" : "No user", 
+        session: authData?.session ? "Session exists" : "No session",
+        error: authError?.message 
+      });
+
+      if (authError) {
+        console.error("Signup error:", authError);
+        throw authError;
+      }
+
+      // Check if email confirmation is required
+      if (authData.user && !authData.session) {
+        console.log("Email confirmation required - email should be sent");
+        // Email confirmation is required, email should be sent
+      } else if (authData.user && authData.session) {
+        console.log("User created and session exists - email confirmation may be disabled");
+        // User is already confirmed (email confirmation might be disabled)
+      }
 
       // If user was created successfully, create/update the profile
       if (authData.user) {
