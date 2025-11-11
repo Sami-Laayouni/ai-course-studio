@@ -189,7 +189,7 @@ Make the instructions specific, engaging, and appropriate for the grade level. T
       prompt,
       generated_content: phases,
       content_type: "chat_phases",
-      model_used: "openai/gpt-4o-mini",
+      model_used: "google/gemini-2.0-flash-lite",
     });
 
     return NextResponse.json({ phases: phases.phases });

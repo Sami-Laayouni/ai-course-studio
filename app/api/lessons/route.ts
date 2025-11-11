@@ -180,31 +180,23 @@ Return the response as valid JSON with this structure:
 Make the lesson engaging, interactive, and suitable for the specified grade level and subject area.
 `;
 
-  const { text } = await generateText({
-    model: "openai/gpt-4o-mini",
-    prompt,
-    temperature: 0.7,
-  });
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    // If JSON parsing fails, return a basic structure
-    return {
-      overview: {
-        title,
-        description,
-        estimated_duration: estimated_duration || 45,
-        learning_objectives,
-        materials_needed: [],
-      },
-      activities: [],
-      assessment: {
-        formative: [],
-        summative: [],
-        rubric: {},
-      },
-      adaptation_suggestions: {},
-    };
-  }
+  // Note: This function is not currently used (see line 64 comment)
+  // If needed in the future, should use genAI instead of OpenAI
+  // For now, return empty structure as this function is not called
+  return {
+    overview: {
+      title,
+      description,
+      estimated_duration: estimated_duration || 45,
+      learning_objectives,
+      materials_needed: [],
+    },
+    activities: [],
+    assessment: {
+      formative: [],
+      summative: [],
+      rubric: {},
+    },
+    adaptation_suggestions: {},
+  };
 }

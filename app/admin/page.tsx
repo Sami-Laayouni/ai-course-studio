@@ -405,7 +405,7 @@ export default async function AdminPage() {
                       <Settings className="h-4 w-4 text-blue-600" />
                     </div>
                     <div>
-                      <p className="font-medium">OpenAI API</p>
+                      <p className="font-medium">Google AI API</p>
                       <p className="text-sm text-muted-foreground">
                         AI Content Generation
                       </p>

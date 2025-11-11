@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import OpenAI from "openai";
+import genAI from "@/lib/genai";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
@@ -67,7 +65,7 @@ export async function POST(request: NextRequest) {
     if (
       conditionType === "performance" &&
       useAIClassification &&
-      process.env.OPENAI_API_KEY
+      process.env.GOOGLE_AI_API_KEY
     ) {
       // Use AI to classify performance
       const contextText = contextSources
@@ -109,26 +107,40 @@ Respond with JSON:
 }`;
 
       try {
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4",
-          messages: [
+        if (!process.env.GOOGLE_AI_API_KEY) {
+          throw new Error("Google AI API key not configured");
+        }
+
+        const config = {
+          responseMimeType: "application/json",
+          maxOutputTokens: 500,
+          systemInstruction: [
             {
-              role: "system",
-              content:
-                "You are an expert educational AI that evaluates student performance to determine appropriate learning paths. Be fair and encouraging while maintaining academic standards.",
-            },
-            {
-              role: "user",
-              content: prompt,
+              text: "You are an expert educational AI that evaluates student performance to determine appropriate learning paths. Be fair and encouraging while maintaining academic standards.",
             },
           ],
-          max_tokens: 500,
-          temperature: 0.3,
+        };
+
+        const response = await genAI.models.generateContentStream({
+          model: "gemini-2.0-flash-lite",
+          config,
+          contents: [
+            {
+              role: "user",
+              text: prompt,
+            },
+          ],
         });
 
-        const response = completion.choices[0]?.message?.content;
-        if (response) {
-          const parsed = JSON.parse(response);
+        let text = "";
+        for await (const chunk of response) {
+          if (chunk.text) {
+            text += chunk.text;
+          }
+        }
+
+        if (text) {
+          const parsed = JSON.parse(text);
           shouldTakeMasteryPath = parsed.shouldTakeMasteryPath || false;
           confidence = parsed.confidence || 0.5;
           reasoning = parsed.reasoning || "";
