@@ -25,27 +25,66 @@ export default function AuthCallbackPage() {
         const type = searchParams.get("type");
 
         // Handle different confirmation methods
-        if (code) {
-          // Exchange code for session
-          const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
-          if (exchangeError) throw exchangeError;
-        } else if (token_hash && type) {
+        // Priority 1: Hash fragment tokens (most common for email confirmation)
+        if (access_token && refresh_token) {
+          // Set session from tokens in hash fragment
+          const { error: sessionError } = await supabase.auth.setSession({
+            access_token,
+            refresh_token,
+          });
+          if (sessionError) throw sessionError;
+        } 
+        // Priority 2: Token hash with type (OTP verification)
+        else if (token_hash && type) {
           // Verify OTP token
           const { error: verifyError } = await supabase.auth.verifyOtp({
             type: type as any,
             token_hash,
           });
           if (verifyError) throw verifyError;
-        } else if (access_token && refresh_token) {
-          // Set session from tokens
-          const { error: sessionError } = await supabase.auth.setSession({
-            access_token,
-            refresh_token,
-          });
-          if (sessionError) throw sessionError;
+        }
+        // Priority 3: Code exchange (requires PKCE, but email confirmation doesn't use this)
+        else if (code) {
+          // For email confirmation, Supabase doesn't use PKCE code exchange
+          // This code path is for OAuth flows, not email confirmation
+          // Try to exchange anyway, but it might fail
+          try {
+            const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
+            if (exchangeError) {
+              // If code exchange fails, check if we have tokens in hash
+              const hashParams = new URLSearchParams(window.location.hash.substring(1));
+              const hashAccessToken = hashParams.get("access_token");
+              const hashRefreshToken = hashParams.get("refresh_token");
+              
+              if (hashAccessToken && hashRefreshToken) {
+                const { error: hashError } = await supabase.auth.setSession({
+                  access_token: hashAccessToken,
+                  refresh_token: hashRefreshToken,
+                });
+                if (hashError) throw hashError;
+              } else {
+                throw exchangeError;
+              }
+            }
+          } catch (exchangeErr) {
+            // If code exchange fails, try hash fragment as fallback
+            const hashParams = new URLSearchParams(window.location.hash.substring(1));
+            const hashAccessToken = hashParams.get("access_token");
+            const hashRefreshToken = hashParams.get("refresh_token");
+            
+            if (hashAccessToken && hashRefreshToken) {
+              const { error: hashError } = await supabase.auth.setSession({
+                access_token: hashAccessToken,
+                refresh_token: hashRefreshToken,
+              });
+              if (hashError) throw hashError;
+            } else {
+              throw exchangeErr;
+            }
+          }
         } else {
           // No valid token found
-          throw new Error("No valid confirmation token found");
+          throw new Error("No valid confirmation token found in URL");
         }
 
         // Get user to determine redirect
