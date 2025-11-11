@@ -17,7 +17,7 @@ export async function updateSession(request: NextRequest) {
     // The callback page needs to handle the auth code/verifier itself
     // If we call getUser() here, it will interfere with the PKCE flow
     // and cause "both auth code and code verifier should be non-empty" error
-    if (request.nextUrl.pathname === '/auth/callback') {
+    if (request.nextUrl.pathname === '/auth/callback' || request.nextUrl.pathname === '/api/auth/callback') {
       return supabaseResponse;
     }
 
