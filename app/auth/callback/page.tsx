@@ -46,8 +46,23 @@ export default function AuthCallbackPage() {
         console.log("Auth callback - Tokens found:", { access_token: !!access_token, refresh_token: !!refresh_token, code: !!code, token_hash: !!token_hash, type });
 
         // Handle different confirmation methods
-        // Priority 1: Hash fragment tokens (most common for email confirmation)
-        if (access_token && refresh_token) {
+        // Priority 1: Token hash with type (OTP verification - used for email confirmation)
+        // This is the correct method for email confirmations, NOT exchangeCodeForSession
+        if (token_hash && type) {
+          console.log("Using token_hash verification for email confirmation");
+          // Verify OTP token (this is the correct way for email confirmations)
+          const { error: verifyError, data: verifyData } = await supabase.auth.verifyOtp({
+            type: type as any,
+            token_hash,
+          });
+          if (verifyError) {
+            console.error("OTP verification error:", verifyError);
+            throw verifyError;
+          }
+          console.log("OTP verified successfully", verifyData);
+        }
+        // Priority 2: Hash fragment tokens (fallback for OAuth flows)
+        else if (access_token && refresh_token) {
           console.log("Using access_token and refresh_token from URL");
           // Set session from tokens
           const { error: sessionError, data: sessionData } = await supabase.auth.setSession({
@@ -59,34 +74,45 @@ export default function AuthCallbackPage() {
             throw sessionError;
           }
           console.log("Session set successfully");
-        } 
-        // Priority 2: Token hash with type (OTP verification)
-        else if (token_hash && type) {
-          console.log("Using token_hash verification");
-          // Verify OTP token
-          const { error: verifyError } = await supabase.auth.verifyOtp({
-            type: type as any,
-            token_hash,
-          });
-          if (verifyError) {
-            console.error("OTP verification error:", verifyError);
-            throw verifyError;
-          }
-          console.log("OTP verified successfully");
         }
-        // Priority 3: Code exchange (for OAuth flows)
+        // Priority 3: Code exchange (ONLY for OAuth flows with PKCE, NOT for email confirmation)
+        // DO NOT use this for email confirmation - it requires code_verifier cookie
         else if (code) {
-          console.log("Attempting code exchange");
+          console.log("Attempting code exchange (OAuth flow)");
+          // Only use this for OAuth flows, not email confirmation
+          // For email confirmation, Supabase uses token_hash instead
           try {
             const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
             if (exchangeError) {
               console.error("Code exchange error:", exchangeError);
-              throw exchangeError;
+              // If code exchange fails, it might be an email confirmation link
+              // Check if we have token_hash as fallback
+              if (token_hash && type) {
+                console.log("Falling back to token_hash verification");
+                const { error: verifyError } = await supabase.auth.verifyOtp({
+                  type: type as any,
+                  token_hash,
+                });
+                if (verifyError) throw verifyError;
+              } else {
+                throw exchangeError;
+              }
+            } else {
+              console.log("Code exchanged successfully");
             }
-            console.log("Code exchanged successfully");
           } catch (exchangeErr) {
             console.error("Code exchange failed:", exchangeErr);
-            throw exchangeErr;
+            // Try token_hash as last resort
+            if (token_hash && type) {
+              console.log("Trying token_hash verification as fallback");
+              const { error: verifyError } = await supabase.auth.verifyOtp({
+                type: type as any,
+                token_hash,
+              });
+              if (verifyError) throw verifyError;
+            } else {
+              throw exchangeErr;
+            }
           }
         } else {
           // Last resort: Try to get session from Supabase's automatic handling
