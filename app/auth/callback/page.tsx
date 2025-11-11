@@ -16,75 +16,95 @@ export default function AuthCallbackPage() {
       try {
         const supabase = createClient();
         
-        // Get the code from URL hash (Supabase uses #access_token=...)
+        // Get tokens from both hash fragment and query parameters
         const hashParams = new URLSearchParams(window.location.hash.substring(1));
-        const access_token = hashParams.get("access_token");
-        const refresh_token = hashParams.get("refresh_token");
-        const code = searchParams.get("code");
-        const token_hash = searchParams.get("token_hash");
-        const type = searchParams.get("type");
+        const queryParams = new URLSearchParams(window.location.search);
+        
+        // Check hash fragment first (most common for email confirmation)
+        const hashAccessToken = hashParams.get("access_token");
+        const hashRefreshToken = hashParams.get("refresh_token");
+        const hashType = hashParams.get("type");
+        const hashTokenHash = hashParams.get("token_hash");
+        
+        // Check query parameters
+        const queryAccessToken = queryParams.get("access_token");
+        const queryRefreshToken = queryParams.get("refresh_token");
+        const queryCode = queryParams.get("code");
+        const queryTokenHash = queryParams.get("token_hash");
+        const queryType = queryParams.get("type");
+        
+        // Combine all sources
+        const access_token = hashAccessToken || queryAccessToken;
+        const refresh_token = hashRefreshToken || queryRefreshToken;
+        const code = queryCode;
+        const token_hash = hashTokenHash || queryTokenHash;
+        const type = hashType || queryType || "email";
+
+        console.log("Auth callback - URL:", window.location.href);
+        console.log("Auth callback - Hash:", window.location.hash);
+        console.log("Auth callback - Search:", window.location.search);
+        console.log("Auth callback - Tokens found:", { access_token: !!access_token, refresh_token: !!refresh_token, code: !!code, token_hash: !!token_hash, type });
 
         // Handle different confirmation methods
         // Priority 1: Hash fragment tokens (most common for email confirmation)
         if (access_token && refresh_token) {
-          // Set session from tokens in hash fragment
-          const { error: sessionError } = await supabase.auth.setSession({
+          console.log("Using access_token and refresh_token from URL");
+          // Set session from tokens
+          const { error: sessionError, data: sessionData } = await supabase.auth.setSession({
             access_token,
             refresh_token,
           });
-          if (sessionError) throw sessionError;
+          if (sessionError) {
+            console.error("Session error:", sessionError);
+            throw sessionError;
+          }
+          console.log("Session set successfully");
         } 
         // Priority 2: Token hash with type (OTP verification)
         else if (token_hash && type) {
+          console.log("Using token_hash verification");
           // Verify OTP token
           const { error: verifyError } = await supabase.auth.verifyOtp({
             type: type as any,
             token_hash,
           });
-          if (verifyError) throw verifyError;
+          if (verifyError) {
+            console.error("OTP verification error:", verifyError);
+            throw verifyError;
+          }
+          console.log("OTP verified successfully");
         }
-        // Priority 3: Code exchange (requires PKCE, but email confirmation doesn't use this)
+        // Priority 3: Code exchange (for OAuth flows)
         else if (code) {
-          // For email confirmation, Supabase doesn't use PKCE code exchange
-          // This code path is for OAuth flows, not email confirmation
-          // Try to exchange anyway, but it might fail
+          console.log("Attempting code exchange");
           try {
             const { error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
             if (exchangeError) {
-              // If code exchange fails, check if we have tokens in hash
-              const hashParams = new URLSearchParams(window.location.hash.substring(1));
-              const hashAccessToken = hashParams.get("access_token");
-              const hashRefreshToken = hashParams.get("refresh_token");
-              
-              if (hashAccessToken && hashRefreshToken) {
-                const { error: hashError } = await supabase.auth.setSession({
-                  access_token: hashAccessToken,
-                  refresh_token: hashRefreshToken,
-                });
-                if (hashError) throw hashError;
-              } else {
-                throw exchangeError;
-              }
+              console.error("Code exchange error:", exchangeError);
+              throw exchangeError;
             }
+            console.log("Code exchanged successfully");
           } catch (exchangeErr) {
-            // If code exchange fails, try hash fragment as fallback
-            const hashParams = new URLSearchParams(window.location.hash.substring(1));
-            const hashAccessToken = hashParams.get("access_token");
-            const hashRefreshToken = hashParams.get("refresh_token");
-            
-            if (hashAccessToken && hashRefreshToken) {
-              const { error: hashError } = await supabase.auth.setSession({
-                access_token: hashAccessToken,
-                refresh_token: hashRefreshToken,
-              });
-              if (hashError) throw hashError;
-            } else {
-              throw exchangeErr;
-            }
+            console.error("Code exchange failed:", exchangeErr);
+            throw exchangeErr;
           }
         } else {
-          // No valid token found
-          throw new Error("No valid confirmation token found in URL");
+          // Last resort: Try to get session from Supabase's automatic handling
+          // Sometimes Supabase handles the session automatically
+          console.log("No explicit tokens found, checking if session exists...");
+          const { data: { session }, error: sessionCheckError } = await supabase.auth.getSession();
+          
+          if (session && session.user) {
+            console.log("Session found automatically");
+            // Session exists, continue with redirect
+          } else {
+            // No valid token found - log everything for debugging
+            console.error("No valid token found. Full URL:", window.location.href);
+            console.error("Hash params:", Object.fromEntries(hashParams));
+            console.error("Query params:", Object.fromEntries(queryParams));
+            console.error("Session check error:", sessionCheckError);
+            throw new Error("No valid confirmation token found in URL. Please check your email for the correct confirmation link.");
+          }
         }
 
         // Get user to determine redirect
