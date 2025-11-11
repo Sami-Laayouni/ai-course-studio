@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Storage } from "@google-cloud/storage";
-import { DocumentAI } from "@google-cloud/documentai";
+import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { createClient } from "@/lib/supabase/server";
 
 // Initialize Google Cloud clients
@@ -12,7 +12,7 @@ const storage = new Storage({
   },
 });
 
-const documentAI = new DocumentAI({
+const documentAI = new DocumentProcessorServiceClient({
   projectId: process.env.GOOGLE_PROJECT_ID,
   credentials: {
     client_email: process.env.GOOGLE_CLIENT_EMAIL,
@@ -21,6 +21,9 @@ const documentAI = new DocumentAI({
 });
 
 const bucketName = process.env.GOOGLE_CLOUD_BUCKET_NAME || "ai-course-documents";
+
+// Force Node.js runtime for this route (required for Google Cloud SDKs)
+export const runtime = 'nodejs';
 
 export async function POST(request: NextRequest) {
   try {
@@ -80,7 +83,7 @@ export async function POST(request: NextRequest) {
     // Extract text if requested and file is PDF
     if (extractText && file.type === "application/pdf") {
       try {
-        const [operation] = await documentAI.processDocument({
+        const [result] = await documentAI.processDocument({
           name: `projects/${process.env.GOOGLE_PROJECT_ID}/locations/us/processors/${process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID}`,
           rawDocument: {
             content: buffer,
@@ -88,7 +91,6 @@ export async function POST(request: NextRequest) {
           },
         });
 
-        const [result] = await operation.promise();
         extractedText = result.document?.text || "";
 
         // Extract key points and concepts using AI
