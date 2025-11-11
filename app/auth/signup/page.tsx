@@ -23,6 +23,7 @@ import {
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
@@ -30,15 +31,24 @@ export default function SignupPage() {
   const [fullName, setFullName] = useState("");
   const [role, setRole] = useState("teacher");
   const [schoolName, setSchoolName] = useState("");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
+    
+    if (!acceptedTerms) {
+      setError("You must accept the Terms of Service and Privacy Policy to create an account");
+      return;
+    }
+    
     const supabase = createClient();
     setIsLoading(true);
     setError(null);
+    setSuccess(null);
 
     try {
       // First, sign up the user
@@ -84,8 +94,9 @@ export default function SignupPage() {
         // User is already confirmed (email confirmation might be disabled)
       }
 
-      // If user was created successfully, create/update the profile
+      // If user was created successfully, show success message and create/update the profile
       if (authData.user) {
+        setSuccess("Account created successfully!");
         // Wait a moment for the database trigger to potentially create the profile
         await new Promise((resolve) => setTimeout(resolve, 500));
 
@@ -118,16 +129,10 @@ export default function SignupPage() {
               console.error("API profile creation failed:", errorData);
               // Don't block redirect - account was created successfully
               // Profile might be created by trigger or can be created later
-              setError(
-                "Account created successfully! Profile setup may need attention. You can continue."
-              );
             }
           } catch (apiError) {
             console.error("API profile creation error:", apiError);
             // Don't block redirect - account was created successfully
-            setError(
-              "Account created successfully! Profile setup may need attention. You can continue."
-            );
           }
         } else {
           // Profile exists, try to update it with the provided information via API
@@ -138,10 +143,10 @@ export default function SignupPage() {
       }
 
       // Always redirect to success page - account was created
-      // Small delay to ensure any error messages are visible if needed
+      // Small delay to show success message briefly before redirect
       setTimeout(() => {
         router.push("/auth/signup-success");
-      }, 100);
+      }, 1500);
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred");
     } finally {
@@ -250,10 +255,44 @@ export default function SignupPage() {
                       <p className="text-sm text-red-400">{error}</p>
                     </div>
                   )}
+                  {success && (
+                    <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                      <p className="text-sm text-green-400">{success}</p>
+                    </div>
+                  )}
+                  <div className="flex items-start gap-2 space-y-0">
+                    <Checkbox
+                      id="terms"
+                      checked={acceptedTerms}
+                      onCheckedChange={(checked) => setAcceptedTerms(checked === true)}
+                      className="mt-1"
+                    />
+                    <label
+                      htmlFor="terms"
+                      className="text-sm text-gray-400 leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer"
+                    >
+                      I agree to the{" "}
+                      <Link
+                        href="/terms"
+                        target="_blank"
+                        className="text-violet-400 hover:text-violet-300 underline"
+                      >
+                        Terms of Service
+                      </Link>{" "}
+                      and{" "}
+                      <Link
+                        href="/privacy"
+                        target="_blank"
+                        className="text-violet-400 hover:text-violet-300 underline"
+                      >
+                        Privacy Policy
+                      </Link>
+                    </label>
+                  </div>
                   <Button
                     type="submit"
                     className="w-full bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 border-0 shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30 transition-all duration-300 rounded-lg font-semibold h-11"
-                    disabled={isLoading}
+                    disabled={isLoading || !acceptedTerms}
                   >
                     {isLoading ? "Creating account..." : "Create Account"}
                   </Button>
