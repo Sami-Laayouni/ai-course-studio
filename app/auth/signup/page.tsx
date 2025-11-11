@@ -99,11 +99,14 @@ export default function SignupPage() {
         // Only try to create/update if profile doesn't exist
         if (!existingProfile) {
           // Use API endpoint to create profile (bypasses RLS using service role)
+          // Pass user_id and email since user isn't authenticated yet
           try {
             const response = await fetch("/api/auth/create-profile", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
+                user_id: authData.user.id,
+                email: email,
                 full_name: fullName,
                 role: role,
                 school_name: schoolName,
