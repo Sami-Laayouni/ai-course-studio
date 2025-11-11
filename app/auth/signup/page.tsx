@@ -150,21 +150,30 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="flex min-h-svh w-full items-center justify-center p-6 md:p-10">
-      <div className="w-full max-w-sm">
-        <div className="flex flex-col gap-6">
-          <Card>
-            <CardHeader className="text-center">
-              <CardTitle className="text-2xl">Create Account</CardTitle>
-              <CardDescription>
-                Join the AI Course Authoring Studio
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
+    <div className="min-h-svh w-full bg-black text-white flex items-center justify-center p-6 md:p-10 relative overflow-hidden">
+      {/* Background gradient */}
+      <div className="absolute inset-0 bg-gradient-to-br from-gray-900 via-purple-900/20 to-gray-900">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(139,92,246,0.1),transparent_70%)]"></div>
+      </div>
+
+      <div className="w-full max-w-md relative z-10">
+        <div className="flex flex-col gap-8">
+          {/* Logo/Header */}
+          <div className="text-center mb-4">
+            <h1 className="text-3xl sm:text-4xl font-black mb-2 bg-gradient-to-r from-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
+              Create Account
+            </h1>
+            <p className="text-gray-400 text-sm sm:text-base">Join Course Studio</p>
+          </div>
+
+          <Card className="bg-gray-900/50 backdrop-blur-sm border-gray-800/50 shadow-2xl">
+            <CardContent className="p-6 sm:p-8">
               <form onSubmit={handleSignup}>
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-5">
                   <div className="grid gap-2">
-                    <Label htmlFor="fullName">Full Name</Label>
+                    <Label htmlFor="fullName" className="text-gray-300 text-sm font-medium">
+                      Full Name
+                    </Label>
                     <Input
                       id="fullName"
                       type="text"
@@ -172,10 +181,13 @@ export default function SignupPage() {
                       required
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
+                      className="bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-500 focus:border-violet-500 focus:ring-violet-500/20"
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="email">Email</Label>
+                    <Label htmlFor="email" className="text-gray-300 text-sm font-medium">
+                      Email
+                    </Label>
                     <Input
                       id="email"
                       type="email"
@@ -183,51 +195,74 @@ export default function SignupPage() {
                       required
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
+                      className="bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-500 focus:border-violet-500 focus:ring-violet-500/20"
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="password">Password</Label>
+                    <Label htmlFor="password" className="text-gray-300 text-sm font-medium">
+                      Password
+                    </Label>
                     <Input
                       id="password"
                       type="password"
                       required
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      className="bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-500 focus:border-violet-500 focus:ring-violet-500/20"
                     />
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="role">Role</Label>
+                    <Label htmlFor="role" className="text-gray-300 text-sm font-medium">
+                      Role
+                    </Label>
                     <Select value={role} onValueChange={setRole}>
-                      <SelectTrigger>
+                      <SelectTrigger className="bg-gray-800/50 border-gray-700 text-white focus:border-violet-500 focus:ring-violet-500/20">
                         <SelectValue placeholder="Select your role" />
                       </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="teacher">Teacher</SelectItem>
-                        <SelectItem value="admin">Administrator</SelectItem>
-                        <SelectItem value="student">Student</SelectItem>
+                      <SelectContent className="bg-gray-800 border-gray-700">
+                        <SelectItem value="teacher" className="text-white focus:bg-gray-700">
+                          Teacher
+                        </SelectItem>
+                        <SelectItem value="admin" className="text-white focus:bg-gray-700">
+                          Administrator
+                        </SelectItem>
+                        <SelectItem value="student" className="text-white focus:bg-gray-700">
+                          Student
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div className="grid gap-2">
-                    <Label htmlFor="schoolName">School/Organization</Label>
+                    <Label htmlFor="schoolName" className="text-gray-300 text-sm font-medium">
+                      School/Organization
+                    </Label>
                     <Input
                       id="schoolName"
                       type="text"
                       placeholder="Lincoln Elementary School"
                       value={schoolName}
                       onChange={(e) => setSchoolName(e.target.value)}
+                      className="bg-gray-800/50 border-gray-700 text-white placeholder:text-gray-500 focus:border-violet-500 focus:ring-violet-500/20"
                     />
                   </div>
-                  {error && <p className="text-sm text-destructive">{error}</p>}
-                  <Button type="submit" className="w-full" disabled={isLoading}>
+                  {error && (
+                    <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20">
+                      <p className="text-sm text-red-400">{error}</p>
+                    </div>
+                  )}
+                  <Button
+                    type="submit"
+                    className="w-full bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 border-0 shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30 transition-all duration-300 rounded-lg font-semibold h-11"
+                    disabled={isLoading}
+                  >
                     {isLoading ? "Creating account..." : "Create Account"}
                   </Button>
                 </div>
-                <div className="mt-4 text-center text-sm">
+                <div className="mt-6 text-center text-sm text-gray-400">
                   Already have an account?{" "}
                   <Link
                     href="/auth/login"
-                    className="underline underline-offset-4"
+                    className="text-violet-400 hover:text-violet-300 font-medium transition-colors"
                   >
                     Sign in
                   </Link>

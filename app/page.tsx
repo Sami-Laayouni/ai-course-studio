@@ -731,6 +731,118 @@ function DashboardAnimation({ visible }: { visible: boolean }) {
   );
 }
 
+// Scroll Reveal Section for Online Teaching
+function ScrollRevealSection() {
+  const [firstVisible, setFirstVisible] = useState(false);
+  const [secondVisible, setSecondVisible] = useState(false);
+  const [thirdVisible, setThirdVisible] = useState(false);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const firstRef = useRef<HTMLDivElement>(null);
+  const secondRef = useRef<HTMLDivElement>(null);
+  const thirdRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const observer1 = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setFirstVisible(true);
+          }
+        });
+      },
+      { threshold: 0.2 }
+    );
+
+    const observer2 = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setTimeout(() => setSecondVisible(true), 400);
+          }
+        });
+      },
+      { threshold: 0.4 }
+    );
+
+    const observer3 = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            setTimeout(() => setThirdVisible(true), 800);
+          }
+        });
+      },
+      { threshold: 0.6 }
+    );
+
+    if (firstRef.current) observer1.observe(firstRef.current);
+    if (secondRef.current) observer2.observe(secondRef.current);
+    if (thirdRef.current) observer3.observe(thirdRef.current);
+
+    return () => {
+      if (firstRef.current) observer1.unobserve(firstRef.current);
+      if (secondRef.current) observer2.unobserve(secondRef.current);
+      if (thirdRef.current) observer3.unobserve(thirdRef.current);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={sectionRef}
+      className="sticky top-0 min-h-screen flex items-center justify-center w-full"
+    >
+      <div className="max-w-7xl mx-auto w-full text-center">
+        {/* First Statement - Appears when section enters viewport */}
+        <div
+          ref={firstRef}
+          className={`transition-all duration-800 ease-out ${
+            firstVisible
+              ? "opacity-100 translate-y-0"
+              : "opacity-0 translate-y-10"
+          }`}
+        >
+          <h2 className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black mb-4 sm:mb-6 leading-tight">
+            <span className="block text-gray-400">
+              Online learning has never been
+            </span>
+            <span className="block text-gray-400">as good as in class.</span>
+          </h2>
+        </div>
+
+        {/* Second Statement - Dramatically appears after scrolling more */}
+        <div
+          ref={secondRef}
+          className={`mt-12 sm:mt-16 transition-all duration-1000 ease-out ${
+            secondVisible
+              ? "opacity-100 translate-y-0 scale-100"
+              : "opacity-0 translate-y-20 scale-95"
+          }`}
+        >
+          <h2 className="text-4xl sm:text-6xl md:text-7xl lg:text-8xl font-black leading-tight mb-8 sm:mb-10">
+            <span className="block bg-gradient-to-r from-violet-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent">
+              Now it's better.
+            </span>
+          </h2>
+        </div>
+
+        {/* Third Statement - Call to action */}
+        <div
+          ref={thirdRef}
+          className={`transition-all duration-800 ease-out ${
+            thirdVisible
+              ? "opacity-100 translate-y-0"
+              : "opacity-0 translate-y-10"
+          }`}
+        >
+          <p className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-light text-gray-300">
+            Want to check out what we mean?
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // Perfect Fit - Completely Different Design
 function PerfectFitAnimation({ visible }: { visible: boolean }) {
   const [matchProgress, setMatchProgress] = useState(0);
@@ -874,6 +986,7 @@ function PerfectFitAnimation({ visible }: { visible: boolean }) {
 
 export default function HomePage() {
   const [currentSubject, setCurrentSubject] = useState(0);
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [visibleSections, setVisibleSections] = useState<Set<number>>(
     new Set()
@@ -917,7 +1030,11 @@ export default function HomePage() {
 
   useEffect(() => {
     const interval = setInterval(() => {
-      setCurrentSubject((prev) => (prev + 1) % SUBJECTS.length);
+      setIsTransitioning(true);
+      setTimeout(() => {
+        setCurrentSubject((prev) => (prev + 1) % SUBJECTS.length);
+        setIsTransitioning(false);
+      }, 300);
     }, 3000);
     return () => clearInterval(interval);
   }, []);
@@ -1034,16 +1151,21 @@ export default function HomePage() {
       {/* Hero Section */}
       <section
         data-section-index={0}
-        className="min-h-screen flex items-center justify-center px-4 sm:px-6 py-8 sm:py-12 pt-20 sm:pt-24"
+        className="relative min-h-screen flex items-center justify-center px-4 sm:px-6 py-12 sm:py-16 pt-20 sm:pt-24"
       >
-        <div className="max-w-7xl mx-auto text-center w-full">
-          <div className="mb-8 sm:mb-12 md:mb-16">
-            <h1 className="text-4xl sm:text-6xl md:text-8xl lg:text-[120px] font-black mb-4 sm:mb-6 md:mb-8 leading-[0.95] tracking-tight px-2">
-              <span className="block">Teach</span>
-              <span className="relative inline-block mt-1 sm:mt-2">
+        <div className="relative max-w-5xl mx-auto text-center w-full">
+          {/* Main Heading */}
+          <div className="mb-10 sm:mb-12">
+            <h1 className="text-5xl sm:text-6xl md:text-7xl lg:text-8xl font-black mb-6 sm:mb-8 leading-[1.05] tracking-tight">
+              <span className="block text-white mb-2">Teach</span>
+              <span className="relative inline-block mt-3 sm:mt-4 min-h-[1.2em]">
                 <span
                   key={currentSubject}
-                  className="inline-block bg-gradient-to-r from-violet-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent animate-fade-in"
+                  className={`inline-block bg-gradient-to-r from-violet-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent ${
+                    isTransitioning
+                      ? "animate-fade-out"
+                      : "animate-fade-in-smooth"
+                  }`}
                 >
                   {SUBJECTS[currentSubject]}
                 </span>
@@ -1051,32 +1173,34 @@ export default function HomePage() {
             </h1>
           </div>
 
-          <p className="text-lg sm:text-2xl md:text-3xl lg:text-4xl font-light text-gray-300 mb-6 sm:mb-8 tracking-wide max-w-3xl mx-auto leading-relaxed px-4">
-            Explain · Understand · Tailor
-          </p>
+          {/* Subtitle */}
+          <div className="mb-10 sm:mb-12">
+            <p className="text-lg sm:text-xl md:text-2xl lg:text-3xl font-light text-gray-300 tracking-wide max-w-2xl mx-auto leading-relaxed">
+              Explain · Understand · Tailor
+            </p>
+          </div>
 
-          {/* 500+ Students Display */}
-          <div className="mb-8 sm:mb-12 relative px-4">
-            <div className="inline-block relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-violet-500 via-purple-500 to-fuchsia-500 blur-xl opacity-40 animate-pulse"></div>
-              <div className="relative bg-gradient-to-r from-violet-600 via-purple-600 to-fuchsia-600 px-6 sm:px-8 py-3 sm:py-4 rounded-xl shadow-xl">
-                <div className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black text-white mb-1">
-                  500+
-                </div>
-                <div className="text-sm sm:text-lg md:text-xl lg:text-2xl font-bold text-white/90">
-                  STUDENTS AT A TIME
-                </div>
-              </div>
+          {/* 500+ Students Display - No Box */}
+          <div className="mb-10 sm:mb-12">
+            <div className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-black text-white mb-2">
+              500+
+            </div>
+            <div className="text-sm sm:text-base md:text-lg lg:text-xl font-medium text-gray-400 tracking-wider uppercase">
+              Students at a time
             </div>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center items-center mb-12 sm:mb-16 md:mb-20 px-4">
+          {/* CTA Buttons */}
+          <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-12 px-4">
             <Button
               asChild
               size="lg"
-              className="w-full sm:w-auto text-base sm:text-lg px-8 sm:px-12 py-6 sm:py-7 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 border-0 shadow-2xl shadow-violet-500/30 hover:shadow-violet-500/50 transition-all duration-300 rounded-full font-semibold"
+              className="w-full sm:w-auto text-sm sm:text-base px-8 sm:px-10 py-5 sm:py-6 bg-gradient-to-r from-violet-600 to-fuchsia-600 hover:from-violet-500 hover:to-fuchsia-500 border-0 shadow-lg shadow-violet-500/20 hover:shadow-violet-500/30 transition-all duration-300 rounded-full font-semibold"
             >
-              <Link href="/auth/signup">
+              <Link
+                href="/auth/signup"
+                className="flex items-center justify-center"
+              >
                 Get Started Free
                 <ArrowRight className="ml-2 h-4 w-4 sm:h-5 sm:w-5" />
               </Link>
@@ -1085,17 +1209,10 @@ export default function HomePage() {
               asChild
               variant="outline"
               size="lg"
-              className="w-full sm:w-auto text-base sm:text-lg px-8 sm:px-12 py-6 sm:py-7 bg-transparent border-2 border-gray-700 hover:border-gray-600 hover:bg-white/5 rounded-full font-semibold backdrop-blur-sm"
+              className="w-full sm:w-auto text-sm sm:text-base px-8 sm:px-10 py-5 sm:py-6 bg-transparent border-2 border-gray-700 hover:border-gray-600 hover:bg-white/5 rounded-full font-semibold transition-all duration-300"
             >
               <Link href="/auth/login">Sign In</Link>
             </Button>
-          </div>
-
-          {/* Scroll indicator */}
-          <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 animate-bounce">
-            <div className="w-6 h-10 border-2 border-gray-600 rounded-full flex items-start justify-center p-2">
-              <div className="w-1 h-3 bg-gray-400 rounded-full"></div>
-            </div>
           </div>
         </div>
       </section>
@@ -1275,6 +1392,106 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* Learning Styles & Scientific Methods Section */}
+      <section
+        data-section-index={2}
+        className="min-h-screen flex items-center justify-center px-4 sm:px-6 py-12 sm:py-16"
+      >
+        <div className="max-w-7xl mx-auto w-full">
+          <div className="text-center mb-12 sm:mb-16 md:mb-24 px-4">
+            <h2 className="text-3xl sm:text-5xl md:text-7xl font-black mb-4 sm:mb-6 bg-gradient-to-r from-violet-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent">
+              Personalized Learning Styles
+            </h2>
+            <p className="text-base sm:text-lg md:text-xl text-gray-400 font-light max-w-2xl mx-auto">
+              Matches every student's learning style preferences and scientific
+              learning methods
+            </p>
+          </div>
+
+          <div className="max-w-5xl mx-auto px-4">
+            <div className="grid md:grid-cols-2 gap-8 sm:gap-12">
+              <div className="space-y-6">
+                <div className="flex items-start gap-4">
+                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-violet-500 to-purple-500 flex items-center justify-center shadow-xl shadow-violet-500/30 flex-shrink-0">
+                    <Brain className="h-6 w-6 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-white mb-2">
+                      Learning Style Preferences
+                    </h3>
+                    <p className="text-base sm:text-lg text-gray-300 leading-relaxed font-light">
+                      Every student has unique learning preferences. Our system
+                      adapts to visual, auditory, kinesthetic, and
+                      reading/writing learning styles, ensuring optimal
+                      comprehension for each learner.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-xl shadow-purple-500/30 flex-shrink-0">
+                    <TrendingUp className="h-6 w-6 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-white mb-2">
+                      Cognitive Patterns
+                    </h3>
+                    <p className="text-base sm:text-lg text-gray-300 leading-relaxed font-light">
+                      Understanding how each student processes information
+                      allows us to tailor content delivery, pacing, and
+                      complexity to match individual cognitive patterns and
+                      capabilities.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <div className="flex items-start gap-4">
+                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-pink-500 to-fuchsia-500 flex items-center justify-center shadow-xl shadow-pink-500/30 flex-shrink-0">
+                    <CheckCircle2 className="h-6 w-6 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-white mb-2">
+                      Scientific Learning Methods
+                    </h3>
+                    <p className="text-base sm:text-lg text-gray-300 leading-relaxed font-light">
+                      Powered by evidence-based pedagogy and proven learning
+                      methodologies including spaced repetition, active recall,
+                      and interleaved practice to maximize knowledge retention.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-4">
+                  <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-fuchsia-500 to-violet-500 flex items-center justify-center shadow-xl shadow-fuchsia-500/30 flex-shrink-0">
+                    <BarChart3 className="h-6 w-6 text-white" />
+                  </div>
+                  <div>
+                    <h3 className="text-xl sm:text-2xl md:text-3xl font-black text-white mb-2">
+                      Individual Needs
+                    </h3>
+                    <p className="text-base sm:text-lg text-gray-300 leading-relaxed font-light">
+                      Each student receives a personalized learning experience
+                      that adapts to their strengths, addresses their
+                      weaknesses, and optimizes their path to mastery.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Online Teaching Evolution Section */}
+      <section
+        data-section-index={3}
+        className="relative min-h-[150vh] flex flex-col items-center justify-center px-4 sm:px-6 py-8 sm:py-12"
+      >
+        <ScrollRevealSection />
+      </section>
+
       {/* CTA Section */}
       <section
         data-section-index={4}
@@ -1282,7 +1499,7 @@ export default function HomePage() {
       >
         <div className="max-w-4xl mx-auto text-center w-full px-4">
           <h2 className="text-3xl sm:text-5xl md:text-7xl font-black mb-6 sm:mb-8 bg-gradient-to-r from-violet-400 via-purple-400 to-fuchsia-400 bg-clip-text text-transparent">
-            Welcome to the Future of Education
+            Check out the Future of Education
           </h2>
           <p className="text-lg sm:text-xl md:text-2xl text-gray-400 mb-8 sm:mb-12 font-light">
             Join educators creating the future of personalized learning
@@ -1471,6 +1688,32 @@ export default function HomePage() {
         }
         .animate-slide-up {
           animation: slide-up 0.5s ease-out forwards;
+        }
+        @keyframes fade-in-smooth {
+          from {
+            opacity: 0;
+            transform: translateY(10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+        .animate-fade-in-smooth {
+          animation: fade-in-smooth 0.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+        @keyframes fade-out {
+          from {
+            opacity: 1;
+            transform: translateY(0);
+          }
+          to {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+        }
+        .animate-fade-out {
+          animation: fade-out 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
         }
         /* Custom scrollbar styles */
         .scrollbar-thin::-webkit-scrollbar {

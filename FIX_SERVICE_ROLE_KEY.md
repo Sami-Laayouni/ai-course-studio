@@ -1,7 +1,9 @@
 # Fix: Invalid API Key Error
 
 ## Problem
+
 You're getting this error:
+
 ```
 Invalid API key
 Double check your Supabase `anon` or `service_role` API key.
@@ -29,7 +31,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
 ```
 
-**IMPORTANT**: 
+**IMPORTANT**:
+
 - Use the **service_role** key, NOT the anon key
 - The service_role key starts with `eyJ` (it's a JWT token)
 - Never commit `.env.local` to git
@@ -49,6 +52,7 @@ SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
 ### Step 3: Verify the Key
 
 The service_role key should:
+
 - Start with `eyJ` (it's a JWT token)
 - Be different from your anon key
 - Be much longer than the anon key
@@ -72,4 +76,3 @@ The service_role key should:
 3. **Try signing up again**
 
 The profile creation should now work!
-
