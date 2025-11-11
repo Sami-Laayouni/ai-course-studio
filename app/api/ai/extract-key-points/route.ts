@@ -57,14 +57,14 @@ Format your response as JSON:
       ],
     });
 
-    let text = "";
+    let responseText = "";
     for await (const chunk of response) {
       if (chunk.text) {
-        text += chunk.text;
+        responseText += chunk.text;
       }
     }
     
-    if (!text) {
+    if (!responseText) {
       throw new Error("No response from Google AI");
     }
 
@@ -73,12 +73,12 @@ Format your response as JSON:
     let keyConcepts: string[] = [];
 
     try {
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(responseText);
       keyPoints = parsed.keyPoints || [];
       keyConcepts = parsed.keyConcepts || [];
     } catch (parseError) {
       // Fallback: extract from text response
-      const lines = text.split('\n');
+      const lines = responseText.split('\n');
       let currentSection = '';
       
       for (const line of lines) {
