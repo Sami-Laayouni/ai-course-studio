@@ -6,6 +6,7 @@
  * - API client initialization
  * - Default parameters
  * 
+ * Uses Vertex AI with service account credentials (GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY)
  * To change the model used across the entire platform, update MODEL_NAME below.
  */
 
@@ -33,6 +34,9 @@ export const MODEL_NAME = "gemini-2.5-flash";
 export const DEFAULT_GENERATION_CONFIG = {
   responseMimeType: "text/plain" as const,
   maxOutputTokens: 2000,
+  temperature: 0.7,
+  topP: 0.95,
+  topK: 40,
 };
 
 /**
@@ -62,15 +66,60 @@ export const MODEL_CONFIGS: Record<string, { maxTokens: number; defaultMimeType:
 // ============================================================================
 
 /**
- * Initialize Google GenAI client
- * The client gets the API key from the environment variable `GEMINI_API_KEY`
+ * Initialize Google GenAI client with service account credentials
+ * Uses GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, and GOOGLE_PRIVATE_KEY
  */
-export const ai = new GoogleGenAI({});
+let ai: GoogleGenAI | null = null;
 
-if (!process.env.GEMINI_API_KEY) {
-  console.error("⚠️ Missing GEMINI_API_KEY in environment variables");
-  console.error("   AI features will not work without this key");
+function initializeAI() {
+  if (ai) return ai;
+
+  if (!process.env.GOOGLE_PROJECT_ID || !process.env.GOOGLE_CLIENT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
+    console.error("⚠️ Missing Google Cloud credentials for AI");
+    console.error("   Required: GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY");
+    console.error("   AI features will not work without these credentials");
+    return null;
+  }
+
+  try {
+    // Initialize with service account credentials - same pattern as Document AI and GCS
+    // @google/genai supports Vertex AI mode with service account credentials
+    ai = new GoogleGenAI({
+      project: process.env.GOOGLE_PROJECT_ID,
+      location: process.env.GOOGLE_CLOUD_LOCATION || "us-central1",
+      googleAuthOptions: {
+        credentials: {
+          client_email: process.env.GOOGLE_CLIENT_EMAIL,
+          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        },
+      },
+    });
+    console.log("✅ [AI] Google GenAI initialized with service account credentials");
+    console.log("   Project:", process.env.GOOGLE_PROJECT_ID);
+    console.log("   Location:", process.env.GOOGLE_CLOUD_LOCATION || "us-central1");
+    return ai;
+  } catch (error: any) {
+    console.error("❌ [AI] Failed to initialize Google GenAI:", error.message);
+    return null;
+  }
 }
+
+// Initialize on module load
+ai = initializeAI();
+
+// Export getter function
+export function getAI(): GoogleGenAI {
+  if (!ai) {
+    ai = initializeAI();
+  }
+  if (!ai) {
+    throw new Error("AI not configured. Please set GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, and GOOGLE_PRIVATE_KEY in your .env.local file");
+  }
+  return ai;
+}
+
+// Export for backward compatibility
+export { ai };
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -99,7 +148,7 @@ export function getDefaultConfig() {
  * Check if AI is properly configured
  */
 export function isAIConfigured(): boolean {
-  return !!process.env.GEMINI_API_KEY;
+  return !!(process.env.GOOGLE_PROJECT_ID && process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY);
 }
 
 /**
@@ -107,7 +156,13 @@ export function isAIConfigured(): boolean {
  */
 export function requireAIConfiguration(): void {
   if (!isAIConfigured()) {
-    throw new Error("GEMINI_API_KEY not configured. Please set GEMINI_API_KEY in your .env.local file");
+    throw new Error("AI not configured. Please set GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, and GOOGLE_PRIVATE_KEY in your .env.local file");
   }
 }
 
+/**
+ * Get embedding model name
+ */
+export function getEmbeddingModelName(): string {
+  return "embedding-001";
+}

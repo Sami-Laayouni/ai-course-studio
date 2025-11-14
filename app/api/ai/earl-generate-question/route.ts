@@ -11,14 +11,14 @@ export async function POST(request: NextRequest) {
   try {
     try {
       requireAIConfiguration();
-      console.log("✅ Earl: GEMINI_API_KEY found");
+      console.log("✅ Earl: AI credentials found");
     } catch (error) {
-      console.error("❌ Earl: GEMINI_API_KEY not found");
+      console.error("❌ Earl: AI credentials not found");
       return NextResponse.json(
         {
           question: "What would you like to learn from this activity?",
           success: false,
-          error: "GEMINI_API_KEY not configured. Please set GEMINI_API_KEY in your .env.local file",
+          error: "AI not configured. Please set GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, and GOOGLE_PRIVATE_KEY in your .env.local file",
         },
         { status: 500 }
       );

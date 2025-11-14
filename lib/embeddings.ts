@@ -2,21 +2,13 @@
  * Embedding Utilities using Google Gemini embedding-001
  * 
  * This module provides functions to generate embeddings for text content
- * using Google's Gemini embedding model (embedding-001).
+ * using Google's Gemini embedding model (embedding-001) via Vertex AI.
  * 
  * The embedding model produces 768-dimensional vectors suitable for
  * semantic similarity search using pgvector.
  */
 
-import { GoogleGenAI } from "@google/genai";
-
-// Initialize Google GenAI client for embeddings
-const ai = new GoogleGenAI({});
-
-if (!process.env.GEMINI_API_KEY) {
-  console.error("⚠️ Missing GEMINI_API_KEY in environment variables");
-  console.error("   Embedding features will not work without this key");
-}
+import { getAI, getEmbeddingModelName, requireAIConfiguration } from "./ai-config";
 
 /**
  * Generate embedding for a single text using Gemini embedding-001
@@ -30,9 +22,7 @@ if (!process.env.GEMINI_API_KEY) {
  * ```
  */
 export async function generateEmbedding(text: string): Promise<number[]> {
-  if (!process.env.GEMINI_API_KEY) {
-    throw new Error("GEMINI_API_KEY not configured. Please set GEMINI_API_KEY in your .env.local file");
-  }
+  requireAIConfiguration();
 
   if (!text || text.trim().length === 0) {
     throw new Error("Text cannot be empty");
@@ -45,64 +35,29 @@ export async function generateEmbedding(text: string): Promise<number[]> {
       ? text.substring(0, maxLength) + "..."
       : text;
 
-    // Generate embedding using Gemini embedding-001
-    // The model can produce up to 3072 dimensions, but we'll use 768 for efficiency
+    const ai = getAI();
+
+    // Generate embedding using Vertex AI
+    const response = await ai.models.embedContent({
+      model: getEmbeddingModelName(),
+      content: truncatedText,
+    });
+
+    // Extract embedding vector from response
     let embedding: number[] = [];
     
-    try {
-      // Try the standard embedContent method
-      const response = await (ai as any).models.embedContent({
-        model: "models/embedding-001",
-        content: truncatedText,
-      });
-
-      // Extract embedding vector - try different response structures
-      if ((response as any).embedding?.values) {
-        embedding = (response as any).embedding.values;
-      } else if ((response as any).embedding) {
-        embedding = (response as any).embedding;
-      } else if ((response as any).values) {
-        embedding = (response as any).values;
-      } else if ((response as any).embeddings) {
-        // Sometimes it's plural
-        embedding = Array.isArray((response as any).embeddings) 
-          ? (response as any).embeddings[0] 
-          : (response as any).embeddings;
-      } else if (Array.isArray(response)) {
-        embedding = response;
-      } else {
-        // Try accessing directly
-        const candidate = (response as any)?.embedding?.values || 
-                         (response as any)?.embedding ||
-                         (response as any)?.values ||
-                         (response as any)?.data?.embedding?.values;
-        if (Array.isArray(candidate)) {
-          embedding = candidate;
-        }
-      }
-    } catch (apiError: any) {
-      // If embedContent doesn't work, try alternative API structure
-      console.warn("Standard embedContent failed, trying alternative:", apiError.message);
-      
-      try {
-        // Alternative: try with content object
-        const altResponse = await (ai as any).models.embedContent?.({
-          model: "embedding-001",
-          content: {
-            parts: [{ text: truncatedText }],
-          },
-        });
-        
-        if (altResponse) {
-          embedding = (altResponse as any).embedding?.values || 
-                      (altResponse as any).embedding ||
-                      (altResponse as any).values ||
-                      (altResponse as any).embeddings?.[0] ||
-                      [];
-        }
-      } catch (altError: any) {
-        throw new Error(`Failed to generate embedding: ${apiError.message || altError.message}`);
-      }
+    if ((response as any).embedding?.values) {
+      embedding = (response as any).embedding.values;
+    } else if ((response as any).embedding) {
+      embedding = Array.isArray((response as any).embedding) 
+        ? (response as any).embedding 
+        : [];
+    } else if ((response as any).values) {
+      embedding = (response as any).values;
+    } else if ((response as any).embeddings?.[0]) {
+      embedding = (response as any).embeddings[0];
+    } else if (Array.isArray(response)) {
+      embedding = response;
     }
 
     if (!Array.isArray(embedding) || embedding.length === 0) {
@@ -129,121 +84,39 @@ export async function generateEmbedding(text: string): Promise<number[]> {
 }
 
 /**
- * Generate embeddings for multiple texts in batch
- * 
- * @param texts - Array of texts to generate embeddings for
- * @param batchSize - Number of texts to process in parallel (default: 5)
- * @returns Array of embeddings in the same order as input texts
- * 
- * @example
- * ```ts
- * const embeddings = await generateEmbeddings([
- *   "Text 1...",
- *   "Text 2...",
- *   "Text 3..."
- * ]);
- * ```
+ * Generates embeddings for a list of texts.
+ * @param texts An array of texts to embed.
+ * @returns A promise that resolves to an array of embedding vectors.
  */
-export async function generateEmbeddings(
-  texts: string[],
-  batchSize: number = 5
-): Promise<number[][]> {
-  if (!texts || texts.length === 0) {
-    return [];
-  }
-
+export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
+  // Implement batching and rate limiting if necessary
   const embeddings: number[][] = [];
-  
-  // Process in batches to avoid rate limits
-  for (let i = 0; i < texts.length; i += batchSize) {
-    const batch = texts.slice(i, i + batchSize);
-    const batchEmbeddings = await Promise.all(
-      batch.map(text => generateEmbedding(text))
-    );
-    embeddings.push(...batchEmbeddings);
-    
-    // Small delay between batches to avoid rate limits
-    if (i + batchSize < texts.length) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
+  for (const text of texts) {
+    embeddings.push(await generateEmbedding(text));
   }
-
   return embeddings;
 }
 
 /**
- * Prepare text for embedding by cleaning and chunking
- * 
- * @param text - Raw text to prepare
- * @param maxLength - Maximum length per chunk (default: 1000)
- * @returns Array of cleaned text chunks
+ * Combines multiple text fields into a single string for embedding.
+ * Filters out empty or null values.
+ * @param fields An object containing various text fields.
+ * @returns A single combined string.
  */
-export function prepareTextForEmbedding(
-  text: string,
-  maxLength: number = 1000
-): string[] {
-  if (!text || text.trim().length === 0) {
-    return [];
-  }
-
-  // Clean text: remove extra whitespace, normalize
-  const cleaned = text
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // If text is short enough, return as single chunk
-  if (cleaned.length <= maxLength) {
-    return [cleaned];
-  }
-
-  // Split into chunks at sentence boundaries
-  const sentences = cleaned.match(/[^.!?]+[.!?]+/g) || [cleaned];
-  const chunks: string[] = [];
-  let currentChunk = '';
-
-  for (const sentence of sentences) {
-    if ((currentChunk + sentence).length <= maxLength) {
-      currentChunk += sentence;
-    } else {
-      if (currentChunk) {
-        chunks.push(currentChunk.trim());
-      }
-      currentChunk = sentence;
-    }
-  }
-
-  if (currentChunk) {
-    chunks.push(currentChunk.trim());
-  }
-
-  return chunks.filter(chunk => chunk.length > 0);
+export function combineTextFields(fields: { [key: string]: string | null | undefined }): string {
+  return Object.values(fields)
+    .filter((text) => typeof text === 'string' && text.trim().length > 0)
+    .map((text) => text!.trim())
+    .join(".\n");
 }
 
 /**
- * Combine multiple text fields into a single embedding-ready string
- * 
- * @param fields - Object with text fields to combine
- * @returns Combined text string
+ * Prepares text for embedding by cleaning and chunking if necessary.
+ * (Placeholder for more advanced text processing)
+ * @param text The input text.
+ * @returns Cleaned and potentially chunked text.
  */
-export function combineTextFields(fields: {
-  title?: string;
-  description?: string;
-  content?: string;
-  [key: string]: string | undefined;
-}): string {
-  const parts: string[] = [];
-  
-  if (fields.title) parts.push(fields.title);
-  if (fields.description) parts.push(fields.description);
-  if (fields.content) parts.push(fields.content);
-  
-  // Add any other text fields
-  Object.entries(fields).forEach(([key, value]) => {
-    if (key !== 'title' && key !== 'description' && key !== 'content' && value) {
-      parts.push(value);
-    }
-  });
-
-  return parts.join(' ').trim();
+export function prepareTextForEmbedding(text: string): string {
+  // Basic cleaning: remove excessive whitespace, trim
+  return text.replace(/\s+/g, ' ').trim();
 }
-

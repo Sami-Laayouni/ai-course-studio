@@ -22,6 +22,7 @@ import {
   Sparkles,
   Bell,
   RefreshCw,
+  ExternalLink,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -33,6 +34,7 @@ interface CurriculumDocument {
   id: string;
   title: string;
   file_url: string;
+  file_path?: string;
   file_name: string;
   file_type: string;
   sections: any[];
@@ -65,6 +67,9 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
   const [processingStatus, setProcessingStatus] = useState<string>("");
   const [processingProgress, setProcessingProgress] = useState<number>(0);
   const [sectionHighlights, setSectionHighlights] = useState<Map<string, string>>(new Map());
+  const [insufficientData, setInsufficientData] = useState<any>(null);
+  const [pdfViewUrl, setPdfViewUrl] = useState<string | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   const router = useRouter();
   const supabase = createClient();
@@ -134,6 +139,15 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
         setCurriculum(data);
         setProcessingStatus(data.processing_status || "");
         setProcessingProgress(data.processing_progress || 0);
+        
+        // Generate fresh signed URL for PDF viewing if needed
+        if (data.file_type === "pdf" && data.file_path) {
+          generatePdfViewUrl(data.file_path);
+        } else if (data.file_type === "pdf" && data.file_url) {
+          // Use existing URL if no file_path
+          setPdfViewUrl(data.file_url);
+        }
+        
         if (data.sections && data.sections.length > 0) {
           const firstSectionId = data.sections[0].id || data.sections[0].title;
           setSelectedSection(firstSectionId);
@@ -153,7 +167,9 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
 
   const loadSectionAnalytics = async (sectionId: string, curriculumDocId: string) => {
     setIsLoadingAnalytics(true);
+    setInsufficientData(null);
     try {
+      // First try to load existing analytics from database
       const { data, error } = await supabase
         .from("curriculum_analytics")
         .select("*")
@@ -177,6 +193,12 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
         };
         setSectionAnalytics(analytics);
         updateSectionHighlights(analytics);
+        return;
+      }
+      
+      // If no analytics exist, try to calculate them
+      if (curriculum) {
+        await calculateAnalytics(curriculum.id);
       } else {
         setSectionAnalytics(null);
       }
@@ -322,6 +344,7 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
 
   const calculateAnalytics = async (curriculumId: string) => {
     setIsLoadingAnalytics(true);
+    setInsufficientData(null);
     try {
       const response = await fetch(`/api/courses/${courseId}/curriculum/analytics`, {
         method: "POST",
@@ -329,9 +352,13 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
         body: JSON.stringify({ curriculum_id: curriculumId }),
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        if (selectedSection && data.analytics) {
+      const data = await response.json();
+      
+      if (data.insufficient_data) {
+        setInsufficientData(data.requirements);
+        setSectionAnalytics(null);
+      } else if (response.ok && data.analytics) {
+        if (selectedSection) {
           const sectionData = data.analytics.find(
             (a: any) => a.section_id === selectedSection
           );
@@ -351,6 +378,27 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
     setSelectedSection(sectionId);
     if (curriculum?.id) {
       await loadSectionAnalytics(sectionId, curriculum.id);
+    }
+  };
+
+  const generatePdfViewUrl = async (filePath: string) => {
+    try {
+      const response = await fetch("/api/curriculum/get-view-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filePath }),
+      });
+      
+      if (response.ok) {
+        const { url } = await response.json();
+        setPdfViewUrl(url);
+        setPdfError(null);
+      } else {
+        setPdfError("Failed to generate PDF view URL");
+      }
+    } catch (error) {
+      console.error("Error generating PDF view URL:", error);
+      setPdfError("Error loading PDF");
     }
   };
 
@@ -396,37 +444,32 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
 
   return (
     <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
+      <div className="container mx-auto px-4 py-6 max-w-7xl">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" asChild>
-              <Link href={`/dashboard/courses/${courseId}`}>
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Course
-              </Link>
-            </Button>
-            <div>
-              <h1 className="text-3xl font-bold">Improve Curriculum</h1>
-              <p className="text-muted-foreground mt-1">
-                Upload curriculum documents and analyze student performance
-              </p>
-            </div>
-          </div>
+        <div className="mb-6">
+          <Button variant="ghost" size="sm" asChild className="mb-4">
+            <Link href={`/dashboard/courses/${courseId}`}>
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Course
+            </Link>
+          </Button>
+          <h1 className="text-2xl font-semibold mb-1">Improve Curriculum</h1>
+          <p className="text-sm text-muted-foreground">
+            Upload curriculum documents and analyze student performance
+          </p>
         </div>
 
         {!curriculum ? (
-          <Card className="p-12">
-            <div className="max-w-2xl mx-auto text-center">
-              <div className="h-20 w-20 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                <FileText className="h-10 w-10 text-primary" />
+          <Card className="p-8">
+            <div className="max-w-xl mx-auto text-center">
+              <div className="h-16 w-16 bg-muted rounded-lg flex items-center justify-center mx-auto mb-4">
+                <FileText className="h-8 w-8 text-muted-foreground" />
               </div>
-              <h2 className="text-2xl font-semibold mb-4">
+              <h2 className="text-xl font-semibold mb-2">
                 Upload Your Curriculum
               </h2>
-              <p className="text-muted-foreground mb-8">
-                Upload a PDF, Word document, or PowerPoint presentation of your curriculum.
-                We'll analyze it and map it to your activities to provide performance insights.
+              <p className="text-sm text-muted-foreground mb-6">
+                Upload a PDF, Word document, or PowerPoint presentation. We'll analyze it and map it to your activities.
               </p>
               
               <div className="space-y-4">
@@ -471,7 +514,7 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
-                  <span>{curriculum.title}</span>
+                  <span className="text-lg font-semibold">{curriculum.title}</span>
                   <div className="flex items-center gap-2">
                     {processingStatus === "pending" && (
                       <Badge variant="outline" className="flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-200">
@@ -535,28 +578,93 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
               <CardContent>
                 <div className="space-y-4">
                   {/* Document Preview with Highlighting */}
-                  <div className="border rounded-lg p-4 bg-muted/30 min-h-[600px] max-h-[800px] overflow-auto relative">
+                  <div className="border rounded-lg p-3 bg-muted/30 min-h-[500px] max-h-[700px] overflow-auto relative">
                     {curriculum.file_type === "pdf" ? (
-                      <div className="relative">
-                        <iframe
-                          src={curriculum.file_url}
-                          className="w-full h-full min-h-[600px]"
-                          title="Curriculum Document"
-                        />
-                        {/* Performance Indicators Overlay */}
-                        {sectionHighlights.size > 0 && (
-                          <div className="absolute top-4 right-4 bg-white dark:bg-gray-800 p-3 rounded-lg shadow-lg border text-xs z-10">
-                            <div className="font-semibold mb-2">Performance Indicators</div>
-                            <div className="space-y-1">
-                              <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 bg-green-500 rounded"></div>
-                                <span>Students understand well (≥70%)</span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <div className="w-3 h-3 bg-red-500 rounded"></div>
-                                <span>Students struggle with (&lt;50%)</span>
+                      <div className="relative h-full w-full">
+                        {pdfError ? (
+                          <div className="flex flex-col items-center justify-center h-full min-h-[500px] text-center space-y-3">
+                            <AlertCircle className="h-12 w-12 text-muted-foreground" />
+                            <div>
+                              <h3 className="text-sm font-medium mb-1">Error Loading PDF</h3>
+                              <p className="text-xs text-muted-foreground mb-3">{pdfError}</p>
+                              <div className="flex gap-2 justify-center">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (curriculum.file_path) {
+                                      generatePdfViewUrl(curriculum.file_path);
+                                    } else if (curriculum.file_url) {
+                                      window.open(curriculum.file_url, "_blank");
+                                    }
+                                  }}
+                                >
+                                  <RefreshCw className="h-3 w-3 mr-1.5" />
+                                  Retry
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    const url = pdfViewUrl || curriculum.file_url;
+                                    if (url) window.open(url, "_blank");
+                                  }}
+                                >
+                                  Open in New Tab
+                                </Button>
                               </div>
                             </div>
+                          </div>
+                        ) : pdfViewUrl ? (
+                          <>
+                            {/* Try Google Docs Viewer first, then fallback to direct PDF */}
+                            <iframe
+                              src={`https://docs.google.com/viewer?url=${encodeURIComponent(pdfViewUrl)}&embedded=true`}
+                              className="w-full h-full min-h-[500px] border-0"
+                              title="Curriculum Document"
+                              onError={() => {
+                                // If Google Docs Viewer fails, try direct PDF
+                                const iframe = document.querySelector('iframe[title="Curriculum Document"]') as HTMLIFrameElement;
+                                if (iframe) {
+                                  iframe.src = pdfViewUrl;
+                                  iframe.onerror = () => {
+                                    setPdfError("PDF cannot be displayed inline. Please use 'Open in New Tab'.");
+                                  };
+                                }
+                              }}
+                            />
+                            {/* Fallback button */}
+                            <div className="absolute top-3 right-3 z-10 flex gap-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-xs bg-background/90 backdrop-blur-sm"
+                                onClick={() => window.open(pdfViewUrl, "_blank")}
+                              >
+                                <ExternalLink className="h-3 w-3 mr-1.5" />
+                                Open in New Tab
+                              </Button>
+                            </div>
+                            {/* Performance Indicators Overlay */}
+                            {sectionHighlights.size > 0 && (
+                              <div className="absolute top-3 left-3 bg-background/90 backdrop-blur-sm p-2 rounded border text-xs z-10 shadow-sm">
+                                <div className="font-medium mb-1.5">Performance</div>
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                                    <span>Well understood (≥70%)</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                                    <span>Struggling (&lt;50%)</span>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <div className="flex items-center justify-center h-full min-h-[500px]">
+                            <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                           </div>
                         )}
                       </div>
@@ -580,8 +688,8 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                   {/* Sections List with Performance Indicators */}
                   {curriculum.sections && curriculum.sections.length > 0 && (
                     <div className="space-y-2">
-                      <Label>Sections</Label>
-                      <div className="space-y-1 max-h-40 overflow-y-auto">
+                      <Label className="text-sm font-medium">Sections</Label>
+                      <div className="space-y-1.5 max-h-40 overflow-y-auto">
                         {curriculum.sections.map((section: any, index: number) => {
                           const sectionId = section.id || section.title || `section_${index}`;
                           const isSelected = selectedSection === sectionId;
@@ -600,7 +708,7 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                             <button
                               key={sectionId}
                               onClick={() => handleSectionSelect(sectionId)}
-                              className={`w-full text-left p-2 rounded-md border transition-colors ${sectionColor} ${
+                              className={`w-full text-left p-2.5 rounded-md border transition-colors ${sectionColor} ${
                                 isSelected
                                   ? "bg-primary text-primary-foreground border-primary"
                                   : "hover:bg-muted"
@@ -639,9 +747,9 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
             {/* Analytics Panel */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Sparkles className="h-5 w-5" />
-                  Performance Analytics
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Sparkles className="h-4 w-4 text-muted-foreground" />
+                  <span className="font-semibold">Performance Analytics</span>
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -715,22 +823,67 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                     <AlertCircle className="h-12 w-12 mx-auto mb-4" />
                     <p>Select a section to view analytics</p>
                   </div>
+                ) : insufficientData ? (
+                  <div className="text-center py-12 space-y-4">
+                    <div className="h-12 w-12 bg-muted rounded-lg flex items-center justify-center mx-auto">
+                      <AlertCircle className="h-6 w-6 text-muted-foreground" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-semibold mb-1">Not Enough Data Yet</h3>
+                      <p className="text-sm text-muted-foreground mb-4">
+                        We need more student activity data to generate meaningful analytics.
+                      </p>
+                      <Card className="max-w-sm mx-auto">
+                        <CardContent className="pt-4">
+                          <div className="space-y-3 text-left">
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs text-muted-foreground">Activities</span>
+                                <span className={`text-xs font-medium ${insufficientData.current_activities >= insufficientData.min_activities ? 'text-green-600' : 'text-muted-foreground'}`}>
+                                  {insufficientData.current_activities} / {insufficientData.min_activities}
+                                </span>
+                              </div>
+                              <Progress 
+                                value={(insufficientData.current_activities / insufficientData.min_activities) * 100} 
+                                className="h-1.5"
+                              />
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span className="text-xs text-muted-foreground">Student Plays</span>
+                                <span className={`text-xs font-medium ${insufficientData.current_student_plays >= insufficientData.min_student_plays ? 'text-green-600' : 'text-muted-foreground'}`}>
+                                  {insufficientData.current_student_plays} / {insufficientData.min_student_plays}
+                                </span>
+                              </div>
+                              <Progress 
+                                value={(insufficientData.current_student_plays / insufficientData.min_student_plays) * 100} 
+                                className="h-1.5"
+                              />
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                      <p className="text-xs text-muted-foreground mt-3">
+                        Need {insufficientData.min_activities} activities and {insufficientData.min_student_plays} student plays
+                      </p>
+                    </div>
+                  </div>
                 ) : isLoadingAnalytics ? (
-                  <div className="text-center py-20">
-                    <Loader2 className="h-8 w-8 animate-spin mx-auto mb-4" />
-                    <p className="text-muted-foreground">Loading analytics...</p>
+                  <div className="text-center py-12">
+                    <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-muted-foreground" />
+                    <p className="text-xs text-muted-foreground">Loading analytics...</p>
                   </div>
                 ) : sectionAnalytics ? (
-                  <div className="space-y-6">
+                  <div className="space-y-4">
                     {/* Overview Stats */}
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-2 gap-3">
                       <div className="p-4 border rounded-lg">
-                        <div className="text-sm text-muted-foreground mb-1">Total Students</div>
-                        <div className="text-2xl font-bold">{sectionAnalytics.total_students}</div>
+                        <div className="text-xs text-muted-foreground mb-1">Total Students</div>
+                        <div className="text-2xl font-semibold">{sectionAnalytics.total_students}</div>
                       </div>
                       <div className="p-4 border rounded-lg">
-                        <div className="text-sm text-muted-foreground mb-1">Completion Rate</div>
-                        <div className="text-2xl font-bold">
+                        <div className="text-xs text-muted-foreground mb-1">Completion Rate</div>
+                        <div className="text-2xl font-semibold">
                           {sectionAnalytics.total_students > 0
                             ? Math.round(
                                 (sectionAnalytics.students_completed / sectionAnalytics.total_students) * 100
@@ -740,14 +893,14 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                         </div>
                       </div>
                       <div className="p-4 border rounded-lg">
-                        <div className="text-sm text-muted-foreground mb-1">Average Score</div>
-                        <div className="text-2xl font-bold">
+                        <div className="text-xs text-muted-foreground mb-1">Average Score</div>
+                        <div className="text-2xl font-semibold">
                           {Math.round(sectionAnalytics.average_score)}%
                         </div>
                       </div>
                       <div className="p-4 border rounded-lg">
-                        <div className="text-sm text-muted-foreground mb-1">Attempt Rate</div>
-                        <div className="text-2xl font-bold">
+                        <div className="text-xs text-muted-foreground mb-1">Attempt Rate</div>
+                        <div className="text-2xl font-semibold">
                           {sectionAnalytics.total_students > 0
                             ? Math.round(
                                 (sectionAnalytics.students_attempted / sectionAnalytics.total_students) * 100
@@ -761,14 +914,14 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                     {/* Performance Insights */}
                     {sectionAnalytics.performance_insights && (
                       <div className="space-y-3">
-                        <Label>Performance Insights</Label>
+                        <Label className="text-sm font-medium">Performance Insights</Label>
                         {sectionAnalytics.performance_insights.strong_concepts && (
-                          <div className="p-4 border rounded-lg bg-green-50 dark:bg-green-950">
+                          <div className="p-3 border rounded-lg bg-muted/50">
                             <div className="flex items-center gap-2 mb-2">
-                              <CheckCircle className="h-5 w-5 text-green-600" />
-                              <span className="font-semibold">Students Understand Well</span>
+                              <CheckCircle className="h-4 w-4 text-green-600" />
+                              <span className="text-sm font-medium">Students Understand Well</span>
                             </div>
-                            <ul className="list-disc list-inside space-y-1 text-sm">
+                            <ul className="list-disc list-inside space-y-0.5 text-sm text-muted-foreground">
                               {sectionAnalytics.performance_insights.strong_concepts.map(
                                 (concept: string, i: number) => (
                                   <li key={i}>{concept}</li>
@@ -778,12 +931,12 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                           </div>
                         )}
                         {sectionAnalytics.performance_insights.weak_concepts && (
-                          <div className="p-4 border rounded-lg bg-red-50 dark:bg-red-950">
+                          <div className="p-3 border rounded-lg bg-muted/50">
                             <div className="flex items-center gap-2 mb-2">
-                              <AlertCircle className="h-5 w-5 text-red-600" />
-                              <span className="font-semibold">Students Struggle With</span>
+                              <AlertCircle className="h-4 w-4 text-red-600" />
+                              <span className="text-sm font-medium">Students Struggle With</span>
                             </div>
-                            <ul className="list-disc list-inside space-y-1 text-sm">
+                            <ul className="list-disc list-inside space-y-0.5 text-sm text-muted-foreground">
                               {sectionAnalytics.performance_insights.weak_concepts.map(
                                 (concept: string, i: number) => (
                                   <li key={i}>{concept}</li>
@@ -799,18 +952,18 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                     {sectionAnalytics.common_misconceptions &&
                       sectionAnalytics.common_misconceptions.length > 0 && (
                         <div className="space-y-2">
-                          <Label>Common Misconceptions</Label>
+                          <Label className="text-sm font-medium">Common Misconceptions</Label>
                           <div className="space-y-2">
                             {sectionAnalytics.common_misconceptions.map(
                               (misconception: any, i: number) => (
                                 <div
                                   key={i}
-                                  className="p-3 border rounded-lg bg-yellow-50 dark:bg-yellow-950"
+                                  className="p-3 border rounded-lg bg-muted/30"
                                 >
-                                  <div className="font-medium mb-1">
+                                  <div className="text-sm font-medium mb-1">
                                     {misconception.concept || "Unknown Concept"}
                                   </div>
-                                  <div className="text-sm text-muted-foreground">
+                                  <div className="text-xs text-muted-foreground">
                                     {misconception.description || misconception.misconception}
                                   </div>
                                   {misconception.frequency && (
@@ -828,9 +981,9 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                     {/* Suggestions */}
                     {sectionAnalytics.performance_insights?.suggestions && (
                       <div className="space-y-2">
-                        <Label>Suggestions</Label>
-                        <div className="p-4 border rounded-lg bg-blue-50 dark:bg-blue-950">
-                          <ul className="list-disc list-inside space-y-2 text-sm">
+                        <Label className="text-sm font-medium">Suggestions</Label>
+                        <div className="p-3 border rounded-lg bg-muted/30">
+                          <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
                             {sectionAnalytics.performance_insights.suggestions.map(
                               (suggestion: string, i: number) => (
                                 <li key={i}>{suggestion}</li>

@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { ai, getModelName, getDefaultConfig, isAIConfigured } from "@/lib/ai-config";
+import {
+  ai,
+  getModelName,
+  getDefaultConfig,
+  isAIConfigured,
+} from "@/lib/ai-config";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
@@ -108,7 +113,9 @@ Respond with JSON:
 
       try {
         if (!isAIConfigured()) {
-          throw new Error("GEMINI_API_KEY not configured");
+          throw new Error(
+            "AI not configured. Please set GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, and GOOGLE_PRIVATE_KEY in your .env.local file"
+          );
         }
 
         const config = {

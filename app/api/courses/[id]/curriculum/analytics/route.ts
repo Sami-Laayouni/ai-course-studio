@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { ai, getModelName } from "@/lib/ai-config";
+import { ai, getModelName, getDefaultConfig } from "@/lib/ai-config";
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic'; // This route uses cookies/auth, must be dynamic
@@ -54,7 +54,9 @@ export async function POST(
       return NextResponse.json({ error: "Failed to fetch activities" }, { status: 500 });
     }
 
-    // Get all student progress for these activities
+    const activityCount = activities?.length || 0;
+
+    // Get all student progress for these activities (need full data for analytics)
     const activityIds = activities?.map((a) => a.id) || [];
     const { data: progressData, error: progressError } = await supabase
       .from("student_progress")
@@ -63,6 +65,27 @@ export async function POST(
 
     if (progressError) {
       console.error("Error fetching progress:", progressError);
+    }
+
+    // Calculate total student plays (sum of all attempts)
+    const totalStudentPlays = progressData?.reduce((sum, p) => sum + (p.attempts || 0), 0) || 0;
+
+    // Check minimum data requirements: at least 3 activities and 25 student plays
+    const MIN_ACTIVITIES = 3;
+    const MIN_STUDENT_PLAYS = 25;
+
+    if (activityCount < MIN_ACTIVITIES || totalStudentPlays < MIN_STUDENT_PLAYS) {
+      return NextResponse.json({
+        success: false,
+        insufficient_data: true,
+        message: "Not enough data yet",
+        requirements: {
+          min_activities: MIN_ACTIVITIES,
+          min_student_plays: MIN_STUDENT_PLAYS,
+          current_activities: activityCount,
+          current_student_plays: totalStudentPlays,
+        },
+      });
     }
 
     // Get enrollments to count total students
@@ -225,9 +248,20 @@ Return a JSON object with:
   "suggestions": ["suggestion1", "suggestion2"]
 }`;
 
-          const response = await genAI.models.generateContent({
+          const config = {
+            ...getDefaultConfig(),
+            responseMimeType: "application/json" as const,
+          };
+
+          const response = await ai.models.generateContent({
             model: getModelName(),
-            contents: misconceptionPrompt,
+            config,
+            contents: [
+              {
+                role: "user",
+                text: misconceptionPrompt,
+              },
+            ],
           });
 
           let responseText = "";

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { bucket } from "@/lib/gcs";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
-import { ai, getModelName } from "@/lib/ai-config";
+import { ai, getModelName, getDefaultConfig } from "@/lib/ai-config";
 
 // Initialize Document AI client using environment variables
 const documentAI = new DocumentProcessorServiceClient({
@@ -30,9 +30,20 @@ Return a JSON array of sections. Each section should have: id, title, pageNumber
 Document text:
 ${text.substring(0, 5000)}...`;
 
+    const config = {
+      ...getDefaultConfig(),
+      responseMimeType: "application/json" as const,
+    };
+
     const response = await ai.models.generateContent({
       model: getModelName(),
-      contents: prompt,
+      config,
+      contents: [
+        {
+          role: "user",
+          text: prompt,
+        },
+      ],
     });
 
     let responseText = "";
@@ -203,7 +214,15 @@ async function processJob(job: any, supabase: any) {
         }
       );
 
-      if (!analyticsResponse.ok) {
+      const analyticsData = await analyticsResponse.json();
+      
+      // If insufficient data, don't fail the job - just log it
+      if (analyticsData.insufficient_data) {
+        console.log(`⚠️ [PROCESS-JOBS] Insufficient data for analytics: ${analyticsData.message}`);
+        console.log(`   Activities: ${analyticsData.requirements.current_activities}/${analyticsData.requirements.min_activities}`);
+        console.log(`   Student Plays: ${analyticsData.requirements.current_student_plays}/${analyticsData.requirements.min_student_plays}`);
+        // Don't throw error - job completes successfully, analytics just won't be available yet
+      } else if (!analyticsResponse.ok) {
         throw new Error("Failed to calculate analytics");
       }
     }

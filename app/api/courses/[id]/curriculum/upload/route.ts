@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { createClient } from "@/lib/supabase/server";
 import { bucket, bucketName } from "@/lib/gcs";
-import { ai, getModelName } from "@/lib/ai-config";
+import { ai, getModelName, getDefaultConfig } from "@/lib/ai-config";
 
 // Initialize Document AI client using environment variables
 const documentAI = new DocumentProcessorServiceClient({
@@ -30,9 +30,20 @@ Return a JSON array of sections. Each section should have: title, pageNumber (or
 Document text:
 ${text.substring(0, 5000)}...`;
 
+    const config = {
+      ...getDefaultConfig(),
+      responseMimeType: "application/json" as const,
+    };
+
     const response = await ai.models.generateContent({
       model: getModelName(),
-      contents: prompt,
+      config,
+      contents: [
+        {
+          role: "user",
+          text: prompt,
+        },
+      ],
     });
 
     let responseText = "";

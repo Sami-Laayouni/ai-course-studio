@@ -11,6 +11,9 @@ importers:
       '@ai-sdk/google':
         specifier: ^2.0.17
         version: 2.0.17(zod@3.25.76)
+      '@google-cloud/aiplatform':
+        specifier: ^5.13.0
+        version: 5.13.0
       '@google-cloud/documentai':
         specifier: ^9.5.0
         version: 9.5.0
@@ -295,6 +298,10 @@ packages:
 
   '@floating-ui/utils@0.2.10':
     resolution: {integrity: sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ==}
+
+  '@google-cloud/aiplatform@5.13.0':
+    resolution: {integrity: sha512-5qILjQwfk4nZL5Mp/xPaJdd4GqNLB6b24ssyqK+ApGu3xW81kcDWzt0ePY8LpedNV4VEwWpa8oZWwnnswSy8ag==}
+    engines: {node: '>=18'}
 
   '@google-cloud/documentai@9.5.0':
     resolution: {integrity: sha512-8oL0eoVliU2T4TC1ZtZpEDsRIc1QxTpnizXJfy7Nu2DqBQy+QaHAOfnZuD2wYZj3X1TxFHE1GxXk1bVsMLtxLA==}
@@ -3015,6 +3022,12 @@ snapshots:
       react-dom: 18.3.1(react@18.3.1)
 
   '@floating-ui/utils@0.2.10': {}
+
+  '@google-cloud/aiplatform@5.13.0':
+    dependencies:
+      google-gax: 5.0.5
+    transitivePeerDependencies:
+      - supports-color
 
   '@google-cloud/documentai@9.5.0':
     dependencies:
