@@ -72,7 +72,7 @@
     "youtube-transcript": "^1.2.1",
     "ytdl": "^1.4.1",
     "ytdl-core": "^4.11.5",
-    "zod": "3.25.67"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",
