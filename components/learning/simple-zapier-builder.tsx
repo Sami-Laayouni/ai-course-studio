@@ -51,6 +51,7 @@ import {
 } from "lucide-react";
 import ContextSelector from "./context-selector";
 import AgenticActivityPlayer from "./agentic-activity-player";
+import SimpleActivityPlayer from "./simple-activity-player";
 
 // Quiz Questions Component
 const QuizQuestionsEditor = ({
@@ -392,6 +393,7 @@ export default function SimpleZapierBuilder({
   const [toolMode, setToolMode] = useState<"select">("select");
   const [activeTab, setActiveTab] = useState<"nodes" | "settings">("nodes");
   const [showPreview, setShowPreview] = useState(false);
+  const [showPreviewFlow, setShowPreviewFlow] = useState(false);
   const [savedActivityId, setSavedActivityId] = useState<string | null>(null);
   const [autoSaveKey, setAutoSaveKey] = useState<string | null>(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
@@ -427,6 +429,7 @@ export default function SimpleZapierBuilder({
   const [agentLogs, setAgentLogs] = useState<string[]>([]);
   const [agentCritique, setAgentCritique] = useState<string>("");
   const [agentRawJSON, setAgentRawJSON] = useState<string>("");
+  const canPreviewFlow = nodes.length >= 2;
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const nodeIdCounter = useRef(0);
@@ -845,8 +848,13 @@ export default function SimpleZapierBuilder({
   };
 
   const updateNode = (nodeId: string, updates: Partial<ActivityNode>) => {
-    setNodes(
-      nodes.map((node) => (node.id === nodeId ? { ...node, ...updates } : node))
+    setNodes((currentNodes) =>
+      currentNodes.map((node) =>
+        node.id === nodeId ? { ...node, ...updates } : node
+      )
+    );
+    setSelectedNode((current) =>
+      current && current.id === nodeId ? { ...current, ...updates } : current
     );
     saveToHistory();
     // Auto-save after each change
@@ -1007,8 +1015,17 @@ export default function SimpleZapierBuilder({
   };
 
   const handleAddConnection = (fromNodeId: string) => {
+    if (connectionFromNode === fromNodeId) {
+      setConnectionFromNode(null);
+      setIsConnecting(false);
+      setConnectionStart(null);
+      return;
+    }
+
     setConnectionFromNode(fromNodeId);
     setShowNodePicker(true);
+    setIsConnecting(true);
+    setConnectionStart(fromNodeId);
   };
 
   const handleConnectButton = (fromNodeId: string) => {
@@ -1204,7 +1221,7 @@ export default function SimpleZapierBuilder({
           return false;
         }
       } else if (node.type === "pdf") {
-        if (!node.config.title?.trim()) {
+        if (!node.title?.trim()) {
           alert(`Please add a title for the PDF node "${node.title}"`);
           return false;
         }
@@ -1542,39 +1559,61 @@ export default function SimpleZapierBuilder({
         {/* Zapier-style node */}
         <div className="relative">
           <Card
-            className={`w-48 h-20 p-3 hover:shadow-xl transition-all duration-200 cursor-pointer ${
-              isRequired
-                ? "border-2 border-orange-300 shadow-md"
-                : "border border-gray-200"
-            }`}
+            className={`w-56 rounded-2xl min-h-[5rem] p-4 backdrop-blur-sm cursor-pointer border transition-all duration-200 ${
+              node.isSelected
+                ? "ring-2 ring-blue-500 shadow-lg border-blue-300"
+                : "shadow-sm hover:shadow-md border-gray-200"
+            } ${isRequired ? "bg-white" : "bg-white/95"}`}
             style={{
-              backgroundColor: "white",
-              borderColor: node.color,
+              borderColor: node.isSelected
+                ? "#3b82f6"
+                : isRequired
+                ? "#fb923c"
+                : "#e5e7eb",
             }}
           >
-            <div className="flex items-center gap-3 h-full">
+            <div className="flex items-start gap-3">
               <div
-                className="p-2 rounded-lg flex-shrink-0"
-                style={{ backgroundColor: node.color }}
+                className="p-2.5 rounded-xl flex-shrink-0 shadow-sm"
+                style={{
+                  backgroundColor: `${node.color || "#e5e7eb"}20`,
+                  border: `1px solid ${node.color || "#e5e7eb"}`,
+                }}
               >
-                <Icon className="h-4 w-4 text-white" />
+                <Icon
+                  className="h-4 w-4"
+                  style={{ color: node.color || "#111827" }}
+                />
               </div>
-              <div className="flex-1 min-w-0">
-                <span className="text-sm font-semibold text-gray-900 truncate block">
-                  {node.title}
-                </span>
-                {isRequired && (
-                  <Badge
-                    variant="secondary"
-                    className="text-xs mt-1 bg-orange-100 text-orange-800"
-                  >
-                    Required
-                  </Badge>
+              <div className="flex-1 min-w-0 space-y-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="text-sm font-semibold text-gray-900 leading-tight">
+                    {node.title || nodeType.name}
+                  </span>
+                  {isRequired && (
+                    <Badge
+                      variant="secondary"
+                      className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 border-orange-200 flex-shrink-0"
+                    >
+                      Required
+                    </Badge>
+                  )}
+                </div>
+                <Badge
+                  variant="outline"
+                  className="text-[10px] uppercase tracking-wide border-dashed text-gray-600"
+                >
+                  {nodeType.category}
+                </Badge>
+                {node.description && (
+                  <p className="text-xs text-gray-500 line-clamp-1">
+                    {node.description}
+                  </p>
                 )}
                 {/* AI Chat branching toggle */}
                 {node.type === "ai_chat" && (
                   <div
-                    className="flex items-center gap-1 mt-1"
+                    className="flex items-center gap-1.5 pt-0.5"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Switch
@@ -1595,14 +1634,14 @@ export default function SimpleZapierBuilder({
                       }}
                       className="scale-75"
                     />
-                    <span className="text-xs text-gray-600">Branch</span>
+                    <span className="text-[10px] text-gray-600 font-medium">Branching</span>
                   </div>
                 )}
 
                 {/* Quiz branching toggle */}
                 {node.type === "quiz" && (
                   <div
-                    className="flex items-center gap-1 mt-1"
+                    className="flex items-center gap-1.5 pt-0.5"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <Switch
@@ -1621,7 +1660,7 @@ export default function SimpleZapierBuilder({
                       }}
                       className="scale-75"
                     />
-                    <span className="text-xs text-gray-600">Branch</span>
+                    <span className="text-[10px] text-gray-600 font-medium">Branching</span>
                   </div>
                 )}
               </div>
@@ -2621,6 +2660,22 @@ export default function SimpleZapierBuilder({
               <X className="h-3 w-3 mr-1" />
               Cancel
             </Button>
+            <Button
+              variant="outline"
+              onClick={() => setShowPreviewFlow(true)}
+              disabled={!canPreviewFlow}
+              title={
+                canPreviewFlow
+                  ? "Test this activity in the built-in player"
+                  : "Add at least two nodes to preview the flow"
+              }
+              className={`h-8 px-4 text-sm border-blue-300 text-blue-700 hover:bg-blue-50 ${
+                !canPreviewFlow ? "opacity-60 cursor-not-allowed" : ""
+              }`}
+            >
+              <Play className="h-3 w-3 mr-1" />
+              Preview Flow
+            </Button>
             {savedActivityId && (
               <Button
                 variant="outline"
@@ -3282,6 +3337,54 @@ export default function SimpleZapierBuilder({
               >
                 Close
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preview Flow Modal */}
+      {showPreviewFlow && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg w-full max-w-5xl h-[90vh] flex flex-col shadow-2xl">
+            <div className="flex items-center justify-between p-4 border-b bg-gray-50">
+              <div>
+                <h3 className="text-lg font-semibold">Preview Activity Flow</h3>
+                <p className="text-sm text-gray-600 mt-1">
+                  Test your activity flow in preview mode
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button variant="outline" onClick={() => setShowPreviewFlow(false)}>
+                  <X className="h-4 w-4 mr-2" />
+                  Close
+                </Button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 bg-gray-50">
+              <SimpleActivityPlayer
+                activity={{
+                  id: "preview",
+                  title: workflowTitle || "Preview Activity",
+                  description: workflowDescription || "",
+                  content: {
+                    nodes: nodes.map((node) => ({
+                      id: node.id,
+                      type: node.type,
+                      title: node.title,
+                      description: node.description,
+                      config: node.config,
+                    })),
+                    connections: connections,
+                  },
+                  points: 0,
+                  estimated_duration: 0,
+                }}
+                isPreview={true}
+                onComplete={(score, timeSpent) => {
+                  console.log("Preview completed:", { score, timeSpent });
+                  // Optionally show a success message
+                }}
+              />
             </div>
           </div>
         </div>

@@ -1,6 +1,45 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const courseId = searchParams.get("course_id");
+
+    const supabase = await createClient();
+
+    let query = supabase
+      .from("lessons")
+      .select("*")
+      .order("created_at", { ascending: true });
+
+    if (courseId) {
+      query = query.eq("course_id", courseId);
+    }
+
+    const { data: lessons, error } = await query;
+
+    if (error) {
+      console.error("Error fetching lessons:", error);
+      return NextResponse.json(
+        { error: "Failed to fetch lessons", details: error.message },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      lessons: lessons || [],
+    });
+  } catch (error) {
+    console.error("Error in lessons GET:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -67,7 +106,14 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (lessonError) {
-      throw lessonError;
+      console.error("Error inserting lesson:", lessonError);
+      return NextResponse.json(
+        {
+          error: "Failed to create lesson",
+          details: lessonError.message,
+        },
+        { status: 500 }
+      );
     }
 
     // Note: AI plan generation removed to fix authentication issues
@@ -76,8 +122,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ lesson });
   } catch (error) {
     console.error("Error creating lesson:", error);
+    const message =
+      error instanceof Error ? error.message : "Failed to create lesson";
     return NextResponse.json(
-      { error: "Failed to create lesson" },
+      { error: "Failed to create lesson", details: message },
       { status: 500 }
     );
   }
