@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { generateEmbedding, combineTextFields } from "@/lib/embeddings";
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic'; // This route uses cookies/auth, must be dynamic
 
 /**
  * Generate embedding for an activity

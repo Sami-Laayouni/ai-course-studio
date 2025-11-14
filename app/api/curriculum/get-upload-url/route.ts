@@ -3,6 +3,7 @@ import { bucket } from "@/lib/gcs";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic'; // This route uses cookies/auth, must be dynamic
 
 export async function POST(request: NextRequest) {
   console.log("📤 [GET UPLOAD URL] Starting upload URL generation...");

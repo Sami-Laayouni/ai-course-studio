@@ -14,6 +14,7 @@ const documentAI = new DocumentProcessorServiceClient({
 });
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic'; // This route uses cookies/auth, must be dynamic
 
 // Extract sections from document text using AI
 async function extractSections(text: string): Promise<any[]> {

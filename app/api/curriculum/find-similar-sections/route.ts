@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic'; // This route uses cookies/auth, must be dynamic
 
 /**
  * Find curriculum sections similar to an activity using vector similarity

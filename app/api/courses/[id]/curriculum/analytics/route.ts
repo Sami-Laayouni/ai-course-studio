@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { ai, getModelName } from "@/lib/ai-config";
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic'; // This route uses cookies/auth, must be dynamic
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
