@@ -1,12 +1,5 @@
-import { GoogleGenAI } from "@google/genai";
-
-const genAI = new GoogleGenAI({
-  vertexai: false,
-  apiKey: process.env.GOOGLE_AI_API_KEY,
-});
-
-if (!process.env.GOOGLE_AI_API_KEY) {
-  console.error("No GOOGLE_AI_API_KEY found in environment variables");
-}
-
-export default genAI;
+/**
+ * @deprecated Use `ai` from '@/lib/ai-config' instead
+ * This file is kept for backward compatibility
+ */
+export { ai as default, ai, getModelName, getDefaultConfig, isAIConfigured, requireAIConfiguration } from "./ai-config";

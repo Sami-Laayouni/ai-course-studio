@@ -134,6 +134,7 @@ export default async function StudentLearnPage() {
       // Try direct query first
       const { data: activitiesData, error: activitiesError } = await supabase
         .from("activities")
+        .eq("is_published", true) // Only show published activities to students
         .select("*")
         .in("course_id", courseIds)
         .order("order_index", { ascending: true });

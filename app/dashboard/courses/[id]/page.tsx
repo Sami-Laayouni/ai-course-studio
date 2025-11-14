@@ -259,7 +259,13 @@ export default function CoursePage({ params }: CoursePageProps) {
           </div>
           <div className="flex gap-2">
             <Button variant="outline" asChild>
-              <Link href={`/dashboard/courses/${courseId}/activities/new`}>
+              <Link href={`/dashboard/courses/${courseId}/curriculum`}>
+                <BarChart3 className="h-4 w-4 mr-2" />
+                Improve Curriculum
+              </Link>
+            </Button>
+            <Button variant="outline" asChild>
+              <Link href={`/dashboard/courses/${courseId}/edit`}>
                 <Edit className="h-4 w-4 mr-2" />
                 Edit Course
               </Link>
@@ -354,21 +360,37 @@ export default function CoursePage({ params }: CoursePageProps) {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => {
-                                const shareUrl = `${
-                                  typeof window !== "undefined"
-                                    ? window.location.origin
-                                    : ""
-                                }/learn/activities/${activity.id}`;
-                                navigator.clipboard.writeText(shareUrl);
-                                // You could add a toast notification here
-                                alert(
-                                  `Activity link copied to clipboard!\n\n${shareUrl}`
-                                );
+                              onClick={async () => {
+                                try {
+                                  // Publish the activity (make it visible to students)
+                                  const response = await fetch(`/api/activities/${activity.id}/publish`, {
+                                    method: "POST",
+                                  });
+                                  
+                                  if (response.ok) {
+                                    const shareUrl = `${
+                                      typeof window !== "undefined"
+                                        ? window.location.origin
+                                        : ""
+                                    }/learn/activities/${activity.id}`;
+                                    navigator.clipboard.writeText(shareUrl);
+                                    alert(
+                                      `Activity published and link copied to clipboard!\n\n${shareUrl}\n\nStudents can now access this activity.`
+                                    );
+                                    // Reload to show updated status
+                                    window.location.reload();
+                                  } else {
+                                    const error = await response.json();
+                                    alert(`Failed to publish activity: ${error.error || "Unknown error"}`);
+                                  }
+                                } catch (error: any) {
+                                  console.error("Error publishing activity:", error);
+                                  alert(`Error: ${error.message || "Failed to publish activity"}`);
+                                }
                               }}
                             >
                               <Share2 className="h-4 w-4 mr-1" />
-                              Share
+                              {activity.is_published ? "Share & Get URL" : "Publish & Share"}
                             </Button>
                             <Button variant="outline" size="sm" asChild>
                               <Link

@@ -16,28 +16,23 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { ArrowLeft, Brain, Save, Zap } from "lucide-react";
 import Link from "next/link";
 import SimpleZapierBuilder from "@/components/learning/simple-zapier-builder";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface NewActivityPageProps {
   params: Promise<{ id: string }>;
 }
 
-const DIFFICULTY_LEVELS = [
-  { value: 1, label: "Beginner" },
-  { value: 2, label: "Easy" },
-  { value: 3, label: "Moderate" },
-  { value: 4, label: "Challenging" },
-  { value: 5, label: "Advanced" },
-];
+interface Student {
+  id: string;
+  profiles: {
+    id: string;
+    full_name: string | null;
+    email: string | null;
+  };
+}
 
 export default function NewActivityPage({ params }: NewActivityPageProps) {
   const [courseId, setCourseId] = useState<string>("");
@@ -45,8 +40,9 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
   const [course, setCourse] = useState<any>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [difficulty, setDifficulty] = useState<number>(3);
-  const [duration, setDuration] = useState<number>(30);
+  const [students, setStudents] = useState<Student[]>([]);
+  const [assignToAll, setAssignToAll] = useState<boolean>(true);
+  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +57,7 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
       const resolvedParams = await params;
       setCourseId(resolvedParams.id);
       loadCourse(resolvedParams.id);
+      loadStudents(resolvedParams.id);
 
       // Check if editing existing activity
       const urlParams = new URLSearchParams(window.location.search);
@@ -87,8 +84,28 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
 
       setTitle(data.title || "");
       setDescription(data.description || "");
-      setDifficulty(data.difficulty_level || 3);
-      setDuration(data.estimated_duration || 30);
+      
+      // Load assigned students if they exist
+      // assigned_to can be the JSON string "all" or an array of student IDs
+      if (data.assigned_to) {
+        // Check if it's the string "all" (could be stored as JSON string or plain string)
+        if (data.assigned_to === "all" || data.assigned_to === '"all"') {
+          setAssignToAll(true);
+          setSelectedStudents([]);
+        } else if (Array.isArray(data.assigned_to) && data.assigned_to.length > 0) {
+          setAssignToAll(false);
+          setSelectedStudents(data.assigned_to);
+        } else {
+          // Empty array or null - default to all
+          setAssignToAll(true);
+          setSelectedStudents([]);
+        }
+      } else {
+        // Default to all students
+        setAssignToAll(true);
+        setSelectedStudents([]);
+      }
+      
       setIsLoadingData(false);
       // Don't auto-show builder - let user edit title/description first
       // They can click "Continue to Visual Builder" to open the builder
@@ -97,6 +114,26 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
       console.error("Error loading activity:", error);
       setError("Failed to load activity");
       setIsLoadingData(false);
+    }
+  };
+
+  const loadStudents = async (id: string) => {
+    try {
+      const response = await fetch(`/api/courses/${id}/students`);
+      if (response.ok) {
+        const data = await response.json();
+        setStudents(data.students || []);
+        // Auto-select all students by default
+        if (data.students && data.students.length > 0) {
+          setSelectedStudents(data.students.map((s: Student) => s.id));
+        }
+      } else {
+        console.error("Failed to load students");
+        setStudents([]);
+      }
+    } catch (error) {
+      console.error("Error loading students:", error);
+      setStudents([]);
     }
   };
 
@@ -118,29 +155,40 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
   const handleBasicInfoSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!title || !duration) {
-      setError("Please fill in title and duration");
+    if (!title) {
+      setError("Please fill in title");
       return;
     }
+
+    // Determine assigned_to value
+    // Store "all" as JSON string or array of student IDs
+    const assignedTo = assignToAll ? "all" : selectedStudents;
 
     // Create activity in database first if it doesn't exist
     if (!activityId) {
       try {
         setIsLoading(true);
-        const { data, error } = await supabase
-          .from("activities")
-          .insert({
+        const activityData: any = {
             course_id: courseId,
             title,
             description: description || "",
-            difficulty_level: difficulty,
-            estimated_duration: duration,
             activity_type: "interactive", // Use 'interactive' which is definitely in the allowed list
             content: {}, // Empty JSONB object
             is_adaptive: true,
             order_index: 0,
             points: 0,
-          })
+        };
+
+        // Add assigned_to if the column exists
+        try {
+          activityData.assigned_to = assignedTo;
+        } catch (e) {
+          console.log("assigned_to column might not exist, skipping...");
+        }
+
+        const { data, error } = await supabase
+          .from("activities")
+          .insert(activityData)
           .select()
           .single();
 
@@ -163,6 +211,32 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
         setIsLoading(false);
         return;
       }
+    } else {
+      // Update existing activity with assigned_to
+      try {
+        const updateData: any = {
+          title,
+          description: description || "",
+        };
+        
+        // Add assigned_to if the column exists
+        try {
+          updateData.assigned_to = assignedTo;
+        } catch (e) {
+          console.log("assigned_to column might not exist, skipping...");
+        }
+
+        const { error } = await supabase
+          .from("activities")
+          .update(updateData)
+          .eq("id", activityId);
+
+        if (error) {
+          console.error("Error updating activity:", error);
+        }
+      } catch (error) {
+        console.error("Error updating activity:", error);
+      }
     }
 
     // Save basic info and open builder
@@ -174,6 +248,9 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
     try {
       setIsLoading(true);
 
+      // Determine assigned_to value
+      const assignedTo = assignToAll ? "all" : selectedStudents;
+
       // Save activity to database - use title and description from form, not from activity
       // Only include columns that exist in the database
       const activityData: any = {
@@ -182,12 +259,17 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
         description: description, // Use description from form
         content: activity.content || activity,
         activity_type: "interactive", // Use 'interactive' which exists in the schema
-        difficulty_level: difficulty,
-        estimated_duration: duration || activity.estimated_duration || 30,
         points: activity.points || 100,
         is_adaptive: true,
         order_index: 0,
       };
+
+      // Add assigned_to if the column exists
+      try {
+        activityData.assigned_to = assignedTo;
+      } catch (e) {
+        console.log("assigned_to column might not exist, skipping...");
+      }
 
       // Only add optional columns if they exist in the database schema
       // These might not exist, so we'll try to add them but won't fail if they don't
@@ -223,17 +305,25 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
   };
 
   const handleBuilderClose = async () => {
-    // Save title/description changes if activityId exists
+    // Save title/description and assigned_to changes if activityId exists
     if (activityId && (title || description)) {
       try {
+        const assignedTo = assignToAll ? "all" : selectedStudents;
+        const updateData: any = {
+          title,
+          description,
+        };
+
+        // Add assigned_to if the column exists
+        try {
+          updateData.assigned_to = assignedTo;
+        } catch (e) {
+          console.log("assigned_to column might not exist, skipping...");
+        }
+
         const { error } = await supabase
           .from("activities")
-          .update({
-            title,
-            description,
-            difficulty_level: difficulty,
-            estimated_duration: duration,
-          })
+          .update(updateData)
           .eq("id", activityId);
 
         if (error) {
@@ -376,47 +466,79 @@ export default function NewActivityPage({ params }: NewActivityPageProps) {
                   />
                 </div>
 
-                {/* Duration and Difficulty */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="duration">
-                      Estimated Duration (minutes) *
-                    </Label>
-                    <Input
-                      id="duration"
-                      type="number"
-                      min="5"
-                      max="180"
-                      value={duration}
-                      onChange={(e) =>
-                        setDuration(Number.parseInt(e.target.value) || 30)
-                      }
-                      required
-                    />
+                {/* Assign to Students */}
+                <div className="space-y-3">
+                  <Label>Assign to Specific Students</Label>
+                  <div className="space-y-3">
+                    <div className="flex items-center space-x-2">
+                      <Checkbox
+                        id="assign-all"
+                        checked={assignToAll}
+                        onCheckedChange={(checked) => {
+                          setAssignToAll(checked === true);
+                          if (checked) {
+                            // Select all students when "assign to all" is checked
+                            setSelectedStudents(students.map((s) => s.id));
+                          }
+                        }}
+                      />
+                      <Label
+                        htmlFor="assign-all"
+                        className="text-sm font-normal cursor-pointer"
+                      >
+                        Assign to all students in the class
+                      </Label>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="difficulty">Difficulty Level</Label>
-                    <Select
-                      value={difficulty.toString()}
-                      onValueChange={(value) =>
-                        setDifficulty(Number.parseInt(value))
-                      }
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {DIFFICULTY_LEVELS.map((level) => (
-                          <SelectItem
-                            key={level.value}
-                            value={level.value.toString()}
+                    {!assignToAll && (
+                      <div className="space-y-2 pl-6 border-l-2 border-border">
+                        <Label className="text-sm text-muted-foreground">
+                          Select specific students:
+                        </Label>
+                        <div className="space-y-2 max-h-60 overflow-y-auto">
+                          {students.length === 0 ? (
+                            <p className="text-sm text-muted-foreground">
+                              No students enrolled in this course yet.
+                            </p>
+                          ) : (
+                            students.map((student) => (
+                              <div
+                                key={student.id}
+                                className="flex items-center space-x-2"
+                              >
+                                <Checkbox
+                                  id={student.id}
+                                  checked={selectedStudents.includes(student.id)}
+                                  onCheckedChange={(checked) => {
+                                    if (checked) {
+                                      setSelectedStudents((prev) => [
+                                        ...prev,
+                                        student.id,
+                                      ]);
+                                    } else {
+                                      setSelectedStudents((prev) =>
+                                        prev.filter((id) => id !== student.id)
+                                      );
+                                    }
+                                  }}
+                                />
+                                <Label
+                                  htmlFor={student.id}
+                                  className="text-sm font-normal cursor-pointer"
                           >
-                            {level.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                                  {student.profiles?.full_name || "Unknown Student"}
+                                  {student.profiles?.email && (
+                                    <span className="text-muted-foreground ml-1">
+                                      ({student.profiles.email})
+                                    </span>
+                                  )}
+                                </Label>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

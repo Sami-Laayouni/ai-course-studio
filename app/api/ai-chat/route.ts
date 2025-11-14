@@ -88,18 +88,13 @@ Teaching Approach:
 
 Keep responses short, clear, and focused on learning.`;
 
-    if (!process.env.GOOGLE_AI_API_KEY) {
-      return NextResponse.json(
-        { error: "API key not configured", response: "I'm having trouble connecting. Please check the configuration." },
-        { status: 500 }
-      );
-    }
+    requireAIConfiguration();
 
     console.log("✅ AI Chat: Google AI API key found");
-    console.log("✅ AI Chat: Using model: gemini-2.0-flash-lite");
+    console.log(`✅ AI Chat: Using model: ${getModelName()}`);
 
     const config = {
-      responseMimeType: "text/plain",
+      ...getDefaultConfig(),
       maxOutputTokens: 500,
       systemInstruction: [
         {
@@ -121,8 +116,8 @@ Keep responses short, clear, and focused on learning.`;
     ];
 
     console.log("🤖 AI Chat: Calling Google AI...");
-    const response = await genAI.models.generateContentStream({
-      model: "gemini-2.0-flash-lite",
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
       config,
       contents,
     });
@@ -181,8 +176,8 @@ Return JSON:
         maxOutputTokens: 500,
       };
 
-      const analysisResponse = await genAI.models.generateContentStream({
-        model: "gemini-2.0-flash-lite",
+      const analysisResponse = await ai.models.generateContentStream({
+        model: getModelName(),
         config: analysisConfig,
         contents: [
           {

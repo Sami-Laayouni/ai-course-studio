@@ -24,6 +24,7 @@ import {
   Activity,
 } from "lucide-react";
 import Link from "next/link";
+import MisconceptionsAnalytics from "@/components/teacher/misconceptions-analytics";
 
 interface ActivityAnalyticsPageProps {
   params: Promise<{ id: string; activityId: string }>;
@@ -116,6 +117,7 @@ export default function ActivityAnalyticsPage({
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="performance">Performance</TabsTrigger>
+            <TabsTrigger value="misconceptions">Misconceptions</TabsTrigger>
             <TabsTrigger value="engagement">Engagement</TabsTrigger>
           </TabsList>
 
@@ -256,6 +258,10 @@ export default function ActivityAnalyticsPage({
             </Card>
           </TabsContent>
 
+          <TabsContent value="misconceptions" className="space-y-6">
+            <MisconceptionsAnalytics activityId={activityId} />
+          </TabsContent>
+
           <TabsContent value="engagement" className="space-y-6">
             <Card>
               <CardHeader>
@@ -280,6 +286,8 @@ export default function ActivityAnalyticsPage({
     </div>
   );
 }
+
+
 
 
 

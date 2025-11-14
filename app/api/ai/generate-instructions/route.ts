@@ -67,21 +67,16 @@ Create unique, engaging, and personalized instructions that:
 
 The instructions should be 2-3 paragraphs long and feel personal and encouraging.`;
 
-    // Generate AI response
-    if (!process.env.GOOGLE_AI_API_KEY) {
-      return NextResponse.json(
-        { error: "API key not configured" },
-        { status: 500 }
-      );
-    }
+    // Generate AI response using Gemini AI
+    requireAIConfiguration();
 
     const config = {
-      responseMimeType: "text/plain",
+      ...getDefaultConfig(),
       maxOutputTokens: 400,
     };
 
-    const response = await genAI.models.generateContentStream({
-      model: "gemini-2.0-flash-lite",
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
       config,
       contents: [
         {

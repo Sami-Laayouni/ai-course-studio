@@ -46,20 +46,15 @@ Return JSON response:
 Make questions clear, fair, and educational. Avoid trick questions.
 `;
 
-    if (!process.env.GOOGLE_AI_API_KEY) {
-      return NextResponse.json(
-        { error: "API key not configured" },
-        { status: 500 }
-      );
-    }
+    requireAIConfiguration();
 
     const config = {
-      responseMimeType: "text/plain",
+      ...getDefaultConfig(),
       maxOutputTokens: 1000,
     };
 
-    const response = await genAI.models.generateContentStream({
-      model: "gemini-2.0-flash-lite",
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
       config,
       contents: [
         {

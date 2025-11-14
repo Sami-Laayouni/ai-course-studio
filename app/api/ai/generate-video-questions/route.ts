@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { YoutubeTranscript } from "youtube-transcript";
-import genAI from "@/lib/genai";
+import { ai, getModelName, getDefaultConfig } from "@/lib/ai-config";
 
 /**
  * Generate questions for a YouTube video based on its transcript.
@@ -139,12 +139,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     console.log("📹 Video ID extracted:", videoId);
 
     // Verify API key is configured
-    if (!process.env.GOOGLE_AI_API_KEY) {
-      return NextResponse.json(
-        { error: "API key not configured" },
-        { status: 500 }
-      );
-    }
+    const { requireAIConfiguration } = await import("@/lib/ai-config");
+    requireAIConfiguration();
 
     // Fetch video metadata
     console.log("📥 Fetching video metadata...");
@@ -325,8 +321,8 @@ Make questions clear, pedagogically sound, and placed at optimal learning moment
 
     while (retries <= maxRetries) {
       try {
-        const response = await genAI.models.generateContentStream({
-          model: "gemini-2.0-flash-lite",
+        const response = await ai.models.generateContentStream({
+          model: getModelName(),
           config,
           contents: [
             {

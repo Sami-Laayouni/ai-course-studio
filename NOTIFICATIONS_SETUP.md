@@ -50,3 +50,7 @@ Then run the SQL script from `scripts/create_notifications_table.sql`
 
 
 
+
+
+
+

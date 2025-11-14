@@ -1,0 +1,9 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/process-curriculum-jobs?cron_secret=YOUR_CRON_SECRET_HERE",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}
+

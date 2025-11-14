@@ -48,6 +48,10 @@ import {
   Clock,
   Layers,
   UploadCloud,
+  ClipboardCheck,
+  Sparkles,
+  PlusCircle,
+  RefreshCcw,
 } from "lucide-react";
 import ContextSelector from "./context-selector";
 import AgenticActivityPlayer from "./agentic-activity-player";
@@ -290,6 +294,12 @@ interface ActivityNode {
   isConnected?: boolean;
 }
 
+interface FlashcardConfigTerm {
+  id: string;
+  term: string;
+  definition?: string;
+}
+
 interface ContextSource {
   id: string;
   type: "pdf" | "youtube";
@@ -343,7 +353,7 @@ const NODE_TYPES = [
   {
     id: "pdf",
     name: "Document Upload",
-    description: "Upload PDFs, slideshows, and documents",
+    description: "Upload PDFs, slideshows, and documents for students",
     icon: UploadCloud,
     color: "#F97316",
     category: "content",
@@ -372,7 +382,64 @@ const NODE_TYPES = [
     color: "#7C3AED",
     category: "interactive",
   },
+  {
+    id: "review",
+    name: "Review",
+    description: "Review activity with flashcards and teacher prompts",
+    icon: ClipboardCheck,
+    color: "#10B981",
+    category: "assessment",
+  },
 ];
+
+const getDefaultConfigForNode = (typeId: string) => {
+  if (typeId === "review") {
+    return {
+      review_type: "flashcards",
+      num_terms: 10,
+      points: 50,
+      context: "",
+      flashcard_terms: [],
+    };
+  }
+  return {};
+};
+
+const applyNodeDefaults = (node: ActivityNode): ActivityNode => {
+  const defaults = getDefaultConfigForNode(node.type);
+  return {
+    ...node,
+    config: {
+      ...defaults,
+      ...(node.config || {}),
+    },
+  };
+};
+
+const normalizeFlashcardTerms = (terms: any[]): FlashcardConfigTerm[] => {
+  if (!Array.isArray(terms)) return [];
+  return terms
+    .map((term, index) => {
+      if (typeof term === "string") {
+        return {
+          id: `term_${index}`,
+          term,
+        };
+      }
+      if (term && typeof term === "object") {
+        return {
+          id: term.id || `term_${index}`,
+          term: term.term || "",
+          definition: term.definition,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean) as FlashcardConfigTerm[];
+};
+
+const applyDefaultsToNodeList = (nodeList: ActivityNode[] = []) =>
+  nodeList.map((node) => applyNodeDefaults(node));
 
 export default function SimpleZapierBuilder({
   onActivityCreated,
@@ -408,6 +475,19 @@ export default function SimpleZapierBuilder({
   const [autoSaveKey, setAutoSaveKey] = useState<string | null>(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [generatingFlashcardsNodeId, setGeneratingFlashcardsNodeId] = useState<
+    string | null
+  >(null);
+  const [flashcardGenerationError, setFlashcardGenerationError] = useState<
+    string | null
+  >(null);
+  const [flashcardGenerationErrorNodeId, setFlashcardGenerationErrorNodeId] =
+    useState<string | null>(null);
+  useEffect(() => {
+    setFlashcardGenerationError(null);
+    setFlashcardGenerationErrorNodeId(null);
+  }, [selectedNode?.id]);
+
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [canvasSize, setCanvasSize] = useState({ width: 2000, height: 1500 });
   const [isPanning, setIsPanning] = useState(false);
@@ -566,7 +646,7 @@ export default function SimpleZapierBuilder({
           const parsed = JSON.parse(draftData);
           // Only load if we don't have nodes already
           if (nodes.length === 0 && parsed.nodes && parsed.nodes.length > 0) {
-            setNodes(parsed.nodes || []);
+            setNodes(applyDefaultsToNodeList(parsed.nodes || []));
             setConnections(parsed.connections || []);
             if (parsed.context_sources) {
               setSelectedContextSources(parsed.context_sources);
@@ -615,7 +695,7 @@ export default function SimpleZapierBuilder({
   const undo = () => {
     if (historyIndex > 0) {
       const prevState = history[historyIndex - 1];
-      setNodes(prevState.nodes);
+      setNodes(applyDefaultsToNodeList(prevState.nodes || []));
       setConnections(prevState.connections);
       // Note: workflowTitle and workflowDescription come from props, not state
       setSelectedNode(null);
@@ -628,7 +708,7 @@ export default function SimpleZapierBuilder({
   const redo = () => {
     if (historyIndex < history.length - 1) {
       const nextState = history[historyIndex + 1];
-      setNodes(nextState.nodes);
+      setNodes(applyDefaultsToNodeList(nextState.nodes || []));
       setConnections(nextState.connections);
       // Note: workflowTitle and workflowDescription come from props, not state
       setSelectedNode(null);
@@ -903,7 +983,7 @@ export default function SimpleZapierBuilder({
       initialContent.nodes.length > 0
     ) {
       // Load saved content
-      setNodes(initialContent.nodes || []);
+      setNodes(applyDefaultsToNodeList(initialContent.nodes || []));
       setConnections(initialContent.connections || []);
       if (initialContent.context_sources) {
         setSelectedContextSources(initialContent.context_sources);
@@ -933,7 +1013,7 @@ export default function SimpleZapierBuilder({
         isSelected: false,
         isDragging: false,
       };
-      setNodes([startNode, endNode]);
+      setNodes(applyDefaultsToNodeList([startNode, endNode]));
     }
   }, [initialContent]);
 
@@ -944,7 +1024,7 @@ export default function SimpleZapierBuilder({
       title: nodeType.name,
       description: nodeType.description,
       position,
-      config: {},
+      config: getDefaultConfigForNode(nodeType.id),
       connections: [],
       isSelected: false,
       isDragging: false,
@@ -995,6 +1075,125 @@ export default function SimpleZapierBuilder({
     saveToHistory();
     if (!skipAutoSave) {
       autoSave();
+    }
+  };
+
+  const updateFlashcardTerms = (
+    nodeId: string,
+    updater: (terms: FlashcardConfigTerm[]) => FlashcardConfigTerm[]
+  ) => {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    const currentTerms = normalizeFlashcardTerms(
+      node.config?.flashcard_terms || []
+    );
+    const updatedTerms = updater(currentTerms);
+    updateNodeConfig(nodeId, {
+      flashcard_terms: updatedTerms,
+      num_terms: updatedTerms.length || node.config?.num_terms || 10,
+    });
+  };
+
+  const handleAddFlashcardTerm = (nodeId: string) => {
+    updateFlashcardTerms(nodeId, (terms) => [
+      ...terms,
+      { id: generateUUID(), term: "" },
+    ]);
+  };
+
+  const handleRemoveFlashcardTerm = (nodeId: string, index: number) => {
+    updateFlashcardTerms(nodeId, (terms) =>
+      terms.filter((_, termIndex) => termIndex !== index)
+    );
+  };
+
+  const handleFlashcardTermChange = (
+    nodeId: string,
+    index: number,
+    value: string
+  ) => {
+    updateFlashcardTerms(nodeId, (terms) =>
+      terms.map((term, termIndex) =>
+        termIndex === index ? { ...term, term: value } : term
+      )
+    );
+  };
+
+  const buildFlashcardContext = (node: ActivityNode) => {
+    let contextText = node.config?.context || "";
+    if (selectedContextSources.length > 0) {
+      const contextParts = selectedContextSources.map((source) => {
+        if (source.type === "pdf") {
+          return `Document: ${source.title}\n${
+            source.summary || ""
+          }\nKey Points: ${(source.key_points || []).join(", ")}`;
+        }
+        if (source.type === "youtube") {
+          return `Video: ${source.title}\n${
+            source.summary || ""
+          }\nKey Concepts: ${(source.key_concepts || []).join(", ")}`;
+        }
+        return "";
+      });
+      contextText = `${contextParts.join("\n\n")}\n\n${contextText}`.trim();
+    }
+    return contextText;
+  };
+
+  const handleGenerateFlashcards = async (node: ActivityNode) => {
+    setFlashcardGenerationError(null);
+    setFlashcardGenerationErrorNodeId(null);
+    if (!node) return;
+    if (generatingFlashcardsNodeId === node.id) return;
+
+    setGeneratingFlashcardsNodeId(node.id);
+    try {
+      const contextText = buildFlashcardContext(node);
+      const response = await fetch("/api/ai/generate-flashcards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          context: contextText,
+          num_terms: node.config?.num_terms || 10,
+          node_id: node.id,
+          course_id: courseId,
+          activity_id: activityId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          "Unable to generate flashcards. Please adjust the context and try again."
+        );
+      }
+
+      const data = await response.json();
+      const terms = (data.terms || []).map(
+        (term: string, index: number): FlashcardConfigTerm => ({
+          id: `${node.id}-generated-${Date.now()}-${index}`,
+          term,
+        })
+      );
+
+      if (terms.length === 0) {
+        throw new Error("No flashcards were generated. Try updating the context.");
+      }
+
+      updateNodeConfig(node.id, {
+        flashcard_terms: terms,
+        num_terms: terms.length,
+        flashcards_generated_at: new Date().toISOString(),
+      });
+    } catch (error: unknown) {
+      console.error("Error generating flashcards in builder:", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to generate flashcards. Please try again.";
+      setFlashcardGenerationError(message);
+      setFlashcardGenerationErrorNodeId(node.id);
+    } finally {
+      setGeneratingFlashcardsNodeId(null);
     }
   };
 
@@ -1169,7 +1368,7 @@ export default function SimpleZapierBuilder({
       const fromNode = nodes.find((n) => n.id === connectionFromNode);
 
       // Regular single node creation
-      const newNode = {
+      const newNode = applyNodeDefaults({
         id: getNextNodeId(),
         type: nodeType.id,
         title: nodeType.name,
@@ -1183,7 +1382,7 @@ export default function SimpleZapierBuilder({
         isSelected: false,
         isDragging: false,
         color: nodeType.color,
-      };
+      });
 
       setNodes([...nodes, newNode]);
 
@@ -1204,7 +1403,7 @@ export default function SimpleZapierBuilder({
       saveToHistory();
     } else {
       // No connection from node, just add the node
-      const newNode = {
+      const newNode = applyNodeDefaults({
         id: getNextNodeId(),
         type: nodeType.id,
         title: nodeType.name,
@@ -1215,7 +1414,7 @@ export default function SimpleZapierBuilder({
         isSelected: false,
         isDragging: false,
         color: nodeType.color,
-      };
+      });
 
       setNodes([...nodes, newNode]);
       saveToHistory();
@@ -1332,6 +1531,15 @@ export default function SimpleZapierBuilder({
           alert(`Please set points for the PDF node "${node.title}"`);
           return false;
         }
+      } else if (node.type === "pdf" && node.config?.upload_enabled) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
+          alert(`Please set points for the Document Upload node "${node.title}"`);
+          return false;
+        }
       } else if (node.type === "ai_chat") {
         if (!node.config.prompt?.trim()) {
           alert(`Please add a prompt for the AI Chat node "${node.title}"`);
@@ -1413,7 +1621,7 @@ export default function SimpleZapierBuilder({
       const hasAIBranching = nodes.some(
         (n) => n.type === "ai_chat" && n.config?.enable_branching
       );
-      const hasUploadNodes = nodes.some((n) => n.type === "pdf");
+      const hasUploadNodes = nodes.some((n) => n.type === "pdf" && n.config?.upload_enabled);
       const hasVideoNodes = nodes.some((n) => n.type === "video");
 
       // Calculate total points from nodes (sum of all node points)
@@ -2097,6 +2305,12 @@ export default function SimpleZapierBuilder({
     }
 
     const nodeType = getNodeType(selectedNode.type);
+    const normalizedReviewFlashcards =
+      selectedNode.type === "review"
+        ? normalizeFlashcardTerms(selectedNode.config?.flashcard_terms || [])
+        : [];
+    const isGeneratingFlashcardsForSelectedNode =
+      generatingFlashcardsNodeId === selectedNode.id;
     console.log("Node type:", nodeType);
 
     return (
@@ -2429,6 +2643,137 @@ export default function SimpleZapierBuilder({
               >
                 <Upload className="h-4 w-4 mr-2" />
                 Upload PDF
+              </Button>
+            </div>
+          )}
+
+          {/* PDF/Upload node-specific parameters - merged into pdf node */}
+          {selectedNode.type === "pdf" && selectedNode.config?.upload_enabled && (
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Instructions
+                </Label>
+                <Textarea
+                  value={selectedNode.config.instructions || ""}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      instructions: e.target.value,
+                    })
+                  }
+                  placeholder="Instructions for students viewing uploaded files..."
+                  rows={3}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Accepted File Types
+                </Label>
+                <Input
+                  value={selectedNode.config.accepted_types?.join(", ") || ".pdf, .pptx, .docx, .doc, .jpg, .png"}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      accepted_types: e.target.value.split(",").map(t => t.trim()),
+                    })
+                  }
+                  placeholder=".pdf, .pptx, .docx"
+                  className="mt-1"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Comma-separated list of file extensions
+                </p>
+              </div>
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Max File Size (MB)
+                </Label>
+                <Input
+                  type="number"
+                  value={selectedNode.config.max_size_mb ?? 10}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      max_size_mb: e.target.value ? Number(e.target.value) : 10,
+                    })
+                  }
+                  placeholder="10"
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Points for Completion
+                </Label>
+                <Input
+                  type="number"
+                  value={selectedNode.config.points ?? ""}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
+                    })
+                  }
+                  placeholder="Enter points"
+                  className="mt-1"
+                />
+              </div>
+              <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-md">
+                <p className="text-xs text-blue-800 dark:text-blue-200">
+                  💡 Upload files using the button below. Files will be displayed to students in the activity player.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={async () => {
+                  if (!activityId || !selectedNode.id) {
+                    alert("Please save the activity first before uploading files");
+                    return;
+                  }
+                  
+                  const input = document.createElement("input");
+                  input.type = "file";
+                  input.accept = selectedNode.config.accepted_types?.join(",") || ".pdf,.pptx,.docx,.doc,.jpg,.png";
+                  input.multiple = true;
+                  
+                  input.onchange = async (e: any) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length === 0) return;
+
+                    for (const file of files) {
+                      const formData = new FormData();
+                      formData.append("file", file);
+                      formData.append("activityId", activityId);
+                      formData.append("nodeId", selectedNode.id);
+                      formData.append("extractText", "true");
+
+                      try {
+                        const response = await fetch("/api/upload/google-cloud", {
+                          method: "POST",
+                          body: formData,
+                        });
+
+                        if (response.ok) {
+                          const data = await response.json();
+                          console.log("File uploaded:", data);
+                          alert(`File "${file.name}" uploaded successfully!`);
+                        } else {
+                          const error = await response.json();
+                          alert(`Failed to upload "${file.name}": ${error.error}`);
+                        }
+                      } catch (error: any) {
+                        console.error("Upload error:", error);
+                        alert(`Error uploading "${file.name}": ${error.message}`);
+                      }
+                    }
+                  };
+                  
+                  input.click();
+                }}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Upload Files
               </Button>
             </div>
           )}
@@ -2816,6 +3161,211 @@ export default function SimpleZapierBuilder({
                     </div>
                   )}
                 </div>
+              </div>
+            </div>
+          )}
+
+          {/* Review-specific parameters */}
+          {selectedNode.type === "review" && (
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Review Type
+                </Label>
+                <select
+                  value={selectedNode.config.review_type || "flashcards"}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      review_type: e.target.value,
+                    })
+                  }
+                  className="w-full p-2 border border-gray-300 rounded-md mt-1"
+                >
+                  <option value="flashcards">Flashcards</option>
+                  <option value="teacher_review">Teacher Review</option>
+                </select>
+              </div>
+
+              {selectedNode.config.review_type === "flashcards" && (
+                <div className="space-y-4">
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Context Configuration
+                    </Label>
+                    <Textarea
+                      value={selectedNode.config.context || ""}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNode.id, {
+                          context: e.target.value,
+                        })
+                      }
+                      placeholder="Configure context based on uploaded documents and YouTube videos. The AI will use this to generate relevant terms for flashcards."
+                      rows={4}
+                      className="mt-1"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Describe the context or let the AI analyze uploaded documents/videos automatically.
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Number of Terms
+                    </Label>
+                    <Input
+                      type="number"
+                      value={selectedNode.config.num_terms ?? ""}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNode.id, {
+                          num_terms:
+                            e.target.value === ""
+                              ? undefined
+                              : Number(e.target.value),
+                        })
+                      }
+                      placeholder="Number of flashcard terms"
+                      min="1"
+                      max="50"
+                      className="mt-1"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      type="button"
+                      className="flex-1"
+                      disabled={isGeneratingFlashcardsForSelectedNode}
+                      onClick={() => handleGenerateFlashcards(selectedNode)}
+                    >
+                      {isGeneratingFlashcardsForSelectedNode ? (
+                        <RefreshCcw className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4 mr-2" />
+                      )}
+                      {isGeneratingFlashcardsForSelectedNode
+                        ? "Generating..."
+                        : "Generate Cards"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => handleAddFlashcardTerm(selectedNode.id)}
+                    >
+                      <PlusCircle className="h-4 w-4 mr-2" />
+                      Add Term
+                    </Button>
+                  </div>
+                  {flashcardGenerationError &&
+                    flashcardGenerationErrorNodeId === selectedNode.id && (
+                      <p className="text-xs text-red-600">
+                        {flashcardGenerationError}
+                      </p>
+                    )}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-gray-700">
+                      Flashcard Terms
+                    </Label>
+                    {normalizedReviewFlashcards.length === 0 ? (
+                      <p className="text-sm text-gray-500">
+                        No flashcards yet. Use Generate Cards or Add Term to get
+                        started.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {normalizedReviewFlashcards.map((term, index) => (
+                          <div
+                            key={term.id || `term-${index}`}
+                            className="flex items-center gap-2"
+                          >
+                            <Input
+                              value={term.term}
+                              onChange={(e) =>
+                                handleFlashcardTermChange(
+                                  selectedNode.id,
+                                  index,
+                                  e.target.value
+                                )
+                              }
+                              placeholder={`Term ${index + 1}`}
+                              className="flex-1"
+                            />
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="outline"
+                              onClick={() =>
+                                handleRemoveFlashcardTerm(
+                                  selectedNode.id,
+                                  index
+                                )
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {selectedNode.config.review_type === "teacher_review" && (
+                <div className="space-y-4">
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Context Configuration
+                    </Label>
+                    <Textarea
+                      value={selectedNode.config.context || ""}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNode.id, {
+                          context: e.target.value,
+                        })
+                      }
+                      placeholder="Configure context based on uploaded documents and YouTube videos."
+                      rows={4}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Review Prompts
+                    </Label>
+                    <Textarea
+                      value={selectedNode.config.prompts || ""}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNode.id, {
+                          prompts: e.target.value,
+                        })
+                      }
+                      placeholder="Enter review prompts (one per line). Example: 'Use a semicolon in a sentence'"
+                      rows={6}
+                      className="mt-1"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                      Enter one prompt per line. Students will complete each prompt.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Points for Completion
+                </Label>
+                <Input
+                  type="number"
+                  value={selectedNode.config.points ?? ""}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
+                    })
+                  }
+                  placeholder="Enter points"
+                  className="mt-1"
+                />
               </div>
             </div>
           )}

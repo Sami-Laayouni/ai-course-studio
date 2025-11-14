@@ -36,16 +36,7 @@ export async function POST(request: NextRequest) {
 
     // Use service role client to bypass RLS for profile creation
     // This allows creating profiles for unconfirmed users
-    let serviceClient;
-    try {
-      serviceClient = createServiceClient();
-    } catch (clientError) {
-      console.error("Failed to create service client:", clientError);
-      return NextResponse.json(
-        { error: "Server configuration error", details: clientError instanceof Error ? clientError.message : String(clientError) },
-        { status: 500 }
-      );
-    }
+    const serviceClient = createServiceClient();
 
     // Get user email if not provided
     let userEmail = email;

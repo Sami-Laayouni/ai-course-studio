@@ -42,3 +42,7 @@ CREATE POLICY "Users can delete their own notifications" ON public.notifications
 
 
 
+
+
+
+

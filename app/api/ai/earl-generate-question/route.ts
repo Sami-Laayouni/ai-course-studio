@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import genAI from "@/lib/genai";
+import { ai, getModelName, getDefaultConfig, requireAIConfiguration } from "@/lib/ai-config";
 
 /**
  * Earl - The Intelligent Activity Analyzer
@@ -9,18 +9,20 @@ export async function POST(request: NextRequest) {
   console.log("🔔 Earl: Starting question generation...");
   
   try {
-    if (!process.env.GOOGLE_AI_API_KEY) {
-      console.error("❌ Earl: Google AI API key not found");
+    try {
+      requireAIConfiguration();
+      console.log("✅ Earl: GEMINI_API_KEY found");
+    } catch (error) {
+      console.error("❌ Earl: GEMINI_API_KEY not found");
       return NextResponse.json(
         {
           question: "What would you like to learn from this activity?",
           success: false,
-          error: "Google AI API key not configured. Please set GOOGLE_AI_API_KEY in your .env.local file",
+          error: "GEMINI_API_KEY not configured. Please set GEMINI_API_KEY in your .env.local file",
         },
         { status: 500 }
       );
     }
-    console.log("✅ Earl: Google AI API key found");
 
     const body = await request.json();
     console.log("📥 Earl: Received request body:", {
@@ -128,7 +130,7 @@ ${allContext.substring(0, 8000)}
 
 Return ONLY the question itself, nothing else. Make it short, punchy, and curiosity-driven.`;
 
-    console.log("🤖 Earl: Calling Google AI (gemini-2.0-flash-lite)...");
+    console.log(`🤖 Earl: Calling Google AI (${getModelName()})...`);
     console.log(`📝 Earl: Prompt length: ${prompt.length} characters`);
 
     try {
@@ -144,8 +146,8 @@ Return ONLY the question itself, nothing else. Make it short, punchy, and curios
       
       while (retries <= maxRetries) {
         try {
-          const response = await genAI.models.generateContentStream({
-            model: "gemini-2.0-flash-lite",
+          const response = await ai.models.generateContentStream({
+            model: getModelName(),
             config,
             contents: [
               {

@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { createClient } from "@/lib/supabase/client";
 import {
   Play,
   Pause,
   Upload,
+  UploadCloud,
   FileText,
   Video,
   Brain,
@@ -33,7 +35,13 @@ import {
   Trophy,
   Zap,
   X,
+  ExternalLink,
 } from "lucide-react";
+import ReviewActivity, {
+  type ReviewAnalysisResult,
+  type ReviewCompletionPayload,
+} from "./review-activity";
+import MisconceptionsReview from "./misconceptions-review";
 
 interface ActivityNode {
   id: string;
@@ -88,9 +96,35 @@ export default function EnhancedActivityPlayer({
   const [pdfViewed, setPdfViewed] = useState(false);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState<number>(-1);
   const [videoTime, setVideoTime] = useState<number>(0);
+  const [showMisconceptionsReview, setShowMisconceptionsReview] = useState(false);
+  const [hasCheckedMisconceptions, setHasCheckedMisconceptions] = useState(false);
+  const [pendingReviewAnalysis, setPendingReviewAnalysis] =
+    useState<ReviewAnalysisResult | null>(null);
 
   const startTime = useRef<number>(Date.now());
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const supabase = createClient();
+
+  // Load uploaded files from context_sources
+  useEffect(() => {
+    const loadUploadedFiles = async () => {
+      try {
+        const { data: files, error } = await supabase
+          .from("context_sources")
+          .select("*")
+          .eq("activity_id", activity.id)
+          .eq("type", "document");
+
+        if (!error && files) {
+          setUploadedFiles(files);
+        }
+      } catch (err) {
+        console.error("Error loading uploaded files:", err);
+      }
+    };
+
+    loadUploadedFiles();
+  }, [activity.id, supabase]);
 
   // Initialize activity
   useEffect(() => {
@@ -170,6 +204,13 @@ export default function EnhancedActivityPlayer({
     setProgress((visitedCount / totalNodes) * 100);
   }, [visitedNodes, activity.content.nodes.length]);
 
+  // Reset misconception check state when leaving the end node
+  useEffect(() => {
+    if (currentNode?.type !== "end") {
+      setHasCheckedMisconceptions(false);
+    }
+  }, [currentNode?.id, currentNode?.type]);
+
   const handleNodeSubmit = async () => {
     if (!currentNode) return;
 
@@ -245,9 +286,15 @@ export default function EnhancedActivityPlayer({
           // Custom activity - just move to next
           nextNodeId = getNextNodeId();
           break;
+        case "review":
+          // Review activity - handled by component, don't auto-advance
+          // User clicks "Complete Review" to continue
+          break;
         case "end":
-          handleActivityComplete();
-          return;
+          // Don't auto-complete - let the useEffect check for misconceptions
+          // The misconceptions review will be shown if needed before completion
+          setIsLoading(false);
+          return; // Don't complete yet - let the component render the review if needed
         default:
           // Default behavior - move to next node
           nextNodeId = getNextNodeId();
@@ -315,6 +362,14 @@ export default function EnhancedActivityPlayer({
       },
     ]);
 
+    // Track analytics
+    await trackAnalytics("ai_chat", {
+      score: performanceScore,
+      confidence_score: data.confidence_score,
+      concepts_mastered: data.concepts_mastered || [],
+      concepts_struggling: data.concepts_struggling || [],
+    }, studentInput);
+
     // Determine path if branching is enabled
     if (currentNode.config?.enable_branching) {
       const threshold = currentNode.config?.performance_threshold || 70;
@@ -326,6 +381,68 @@ export default function EnhancedActivityPlayer({
     }
 
     return data;
+  };
+
+  // Track analytics with deduplication
+  const trackedNodes = useRef<Set<string>>(new Set());
+  
+  const trackAnalytics = async (
+    nodeType: string,
+    performanceData: any,
+    studentResponse?: string
+  ) => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user || !currentNode) return;
+
+      // Create unique key for this tracking call
+      const trackingKey = `${user.id}-${activity.id}-${currentNode.id}-${nodeType}`;
+      
+      // Prevent duplicate calls
+      if (trackedNodes.current.has(trackingKey)) {
+        console.log("⏭️ Analytics already tracked for this node, skipping");
+        return;
+      }
+
+      // Mark as tracked immediately to prevent concurrent calls
+      trackedNodes.current.add(trackingKey);
+
+      const response = await fetch("/api/analytics/track-node", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_id: user.id,
+          activity_id: activity.id,
+          node_id: currentNode.id,
+          node_type: nodeType,
+          performance_data: performanceData,
+          student_response: studentResponse,
+          context_sources: contextSources,
+        }),
+      });
+
+      // If the API says it's already tracked, that's fine
+      if (!response.ok && response.status !== 200) {
+        const errorData = await response.json().catch(() => ({}));
+        if (errorData.message?.includes("already tracked")) {
+          console.log("✅ Analytics already tracked on server");
+        } else {
+          console.error("Error tracking analytics:", errorData);
+          // Remove from set so it can be retried
+          trackedNodes.current.delete(trackingKey);
+        }
+      }
+    } catch (error) {
+      console.error("Error tracking analytics:", error);
+      // Remove from set on error so it can be retried
+      if (currentNode) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const trackingKey = `${user.id}-${activity.id}-${currentNode.id}-${nodeType}`;
+          trackedNodes.current.delete(trackingKey);
+        }
+      }
+    }
   };
 
   const handleQuiz = async (): Promise<number> => {
@@ -349,6 +466,15 @@ export default function EnhancedActivityPlayer({
       },
     ]);
 
+    // Track analytics
+    await trackAnalytics("quiz", {
+      score,
+      percentage: score,
+      total_questions: totalQuestions,
+      answered_questions: answeredQuestions,
+      answers: quizAnswers,
+    });
+
     // Check if passing score is met
     const passingScore = currentNode.config?.passing_score || 70;
     if (score >= passingScore) {
@@ -357,6 +483,67 @@ export default function EnhancedActivityPlayer({
     }
 
     return score;
+  };
+
+  const checkForMisconceptions = async () => {
+    if (hasCheckedMisconceptions) return; // Already checked
+    
+    try {
+      setHasCheckedMisconceptions(true); // Mark as checking to prevent duplicate calls
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        // No user, complete activity
+        if (currentNode?.type === "end") {
+          setTimeout(() => handleActivityComplete(), 500);
+        }
+        return;
+      }
+
+      console.log("🔍 Checking for misconceptions for activity:", activity.id, "student:", user.id);
+      
+      // Check multiple times with delays to catch misconceptions that might still be processing
+      let attempts = 0;
+      const maxAttempts = 3;
+      let foundMisconceptions = false;
+
+      while (attempts < maxAttempts && !foundMisconceptions) {
+        if (attempts > 0) {
+          // Wait before retrying (analysis might still be processing)
+          console.log(`⏳ Waiting ${2 * attempts} seconds before retry ${attempts + 1}...`);
+          await new Promise(resolve => setTimeout(resolve, 2000 * attempts));
+        }
+
+        const { data, error } = await supabase
+          .from("student_misconceptions")
+          .select("id, concept, misconception_description, severity")
+          .eq("student_id", user.id)
+          .eq("activity_id", activity.id)
+          .is("resolved_at", null);
+
+        console.log(`📊 Misconceptions query attempt ${attempts + 1}:`, { data, error, count: data?.length });
+
+        if (!error && data && data.length > 0) {
+          console.log("✅ Found misconceptions, showing review:", data.length);
+          setShowMisconceptionsReview(true);
+          foundMisconceptions = true;
+          return; // Exit function, review will be shown
+        }
+        
+        attempts++;
+      }
+
+      // No misconceptions found after all attempts
+      console.log("✅ No misconceptions found after checking, completing activity");
+      if (currentNode?.type === "end") {
+        setTimeout(() => handleActivityComplete(), 500);
+      }
+    } catch (error) {
+      console.error("❌ Error checking misconceptions:", error);
+      // On error, just complete the activity
+      if (currentNode?.type === "end") {
+        setTimeout(() => handleActivityComplete(), 500);
+      }
+    }
   };
 
   const handleCondition = async (): Promise<string | null> => {
@@ -646,17 +833,84 @@ export default function EnhancedActivityPlayer({
 
       case "pdf":
       case "document_upload":
+        // Handle both PDF viewing and file uploads in the same node
+        // Check if this is a file upload node (has upload_enabled config)
+        if (currentNode.config?.upload_enabled) {
         return (
           <div className="space-y-4">
-            <div className="bg-purple-50 p-4 rounded-lg">
-              <h3 className="font-semibold text-purple-900 mb-2">{currentNode.title}</h3>
+              <div className="bg-cyan-50 dark:bg-cyan-950/20 p-4 rounded-lg">
+                <h3 className="font-semibold text-cyan-900 dark:text-cyan-100 mb-2">
+                  {currentNode.title || "Uploaded Files"}
+                </h3>
               {currentNode.description && (
-                <p className="text-purple-800 mb-2">{currentNode.description}</p>
+                  <p className="text-cyan-800 dark:text-cyan-200 mb-2">
+                    {currentNode.description}
+                  </p>
               )}
               {currentNode.config?.instructions && (
-                <p className="text-purple-800 text-sm">{currentNode.config.instructions}</p>
+                  <p className="text-cyan-800 dark:text-cyan-200 text-sm mb-4">
+                    {currentNode.config.instructions}
+                  </p>
               )}
             </div>
+              
+              {/* Display uploaded files */}
+              {uploadedFiles && uploadedFiles.length > 0 ? (
+                <div className="space-y-3">
+                  {uploadedFiles
+                    .filter((file: any) => file.node_id === currentNode.id)
+                    .map((file: any) => (
+                      <div
+                        key={file.id}
+                      className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+                    >
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h4 className="font-medium text-gray-900 dark:text-gray-100 mb-1">
+                            {file.title || file.filename || "Untitled File"}
+                          </h4>
+                          {file.summary && (
+                            <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
+                              {file.summary}
+                            </p>
+                          )}
+                          {file.key_points && file.key_points.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mb-2">
+                              {file.key_points.slice(0, 5).map((point: string, idx: number) => (
+                                <span
+                                  key={idx}
+                                  className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 px-2 py-1 rounded"
+                                >
+                                  {point}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <a
+                          href={file.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="ml-4 px-3 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-md text-sm font-medium transition-colors flex items-center gap-2"
+                        >
+                          <ExternalLink className="h-4 w-4" />
+                          View
+                        </a>
+                      </div>
+                      {file.mime_type && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                          Type: {file.mime_type}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                <UploadCloud className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                <p>No files uploaded yet for this node.</p>
+              </div>
+            )}
             {currentNode.config?.document_url || currentNode.config?.pdf_url ? (
               <div className="border rounded-lg p-4 bg-gray-50">
                 <div className="flex items-center justify-between mb-2">
@@ -700,6 +954,62 @@ export default function EnhancedActivityPlayer({
             )}
           </div>
         );
+        } else {
+          // Regular PDF document viewing (existing code)
+          return (
+            <div className="space-y-4">
+              {currentNode.title && (
+                <h3 className="text-lg font-semibold">{currentNode.title}</h3>
+              )}
+              {currentNode.description && (
+                <p className="text-gray-600 dark:text-gray-400">
+                  {currentNode.description}
+                </p>
+              )}
+              {currentNode.config?.document_url || currentNode.config?.pdf_url ? (
+                <div className="border rounded-lg p-4 bg-gray-50">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <FileText className="h-5 w-5 text-purple-600" />
+                      <span className="font-medium">Document Available</span>
+                    </div>
+                    <Button
+                      onClick={() => {
+                        const url = currentNode.config?.document_url || currentNode.config?.pdf_url;
+                        window.open(url, '_blank');
+                        setPdfViewed(true);
+                      }}
+                      variant="outline"
+                      size="sm"
+                    >
+                      <Eye className="h-4 w-4 mr-2" />
+                      View Document
+                    </Button>
+                  </div>
+                  {pdfViewed && (
+                    <p className="text-sm text-green-600 mt-2">
+                      <CheckCircle className="h-3 w-3 inline mr-1" />
+                      Document viewed
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+                  <Upload className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                  <p className="text-gray-600 mb-4">Upload your document here</p>
+                  <Button onClick={handleDocumentUpload} disabled={isLoading}>
+                    {isLoading ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Upload className="h-4 w-4 mr-2" />
+                    )}
+                    Upload Document
+                  </Button>
+                </div>
+              )}
+            </div>
+          );
+        }
 
       case "slideshow_upload":
         return (
@@ -871,6 +1181,8 @@ export default function EnhancedActivityPlayer({
         );
 
       case "end":
+        // Don't render end content if we need to show misconceptions review
+        // This will be handled by the check before renderNodeContent
         return (
           <div className="text-center space-y-4">
             <CheckCircle className="h-16 w-16 mx-auto text-green-500" />
@@ -934,6 +1246,49 @@ export default function EnhancedActivityPlayer({
           </div>
         );
 
+      case "review":
+        return (
+          <ReviewActivity
+            nodeConfig={currentNode.config || {}}
+            activityId={activity.id}
+            nodeId={currentNode.id}
+            contextSources={contextSources}
+            onComplete={({ responses, analysis }: ReviewCompletionPayload) => {
+              // Track performance
+              setPerformanceHistory((prev) => [
+                ...prev,
+                {
+                  type: "review",
+                  responses,
+                  analysis,
+                  timestamp: Date.now(),
+                },
+              ]);
+
+              if (analysis) {
+                setPendingReviewAnalysis(analysis);
+                setShowMisconceptionsReview(true);
+                setHasCheckedMisconceptions(true);
+              } else {
+                // Ensure we'll still check at the end node for delayed analysis
+                setHasCheckedMisconceptions(false);
+              }
+
+              if (currentNode.config?.points) {
+                setScore(
+                  (prev) => prev + (currentNode.config.points || 0)
+                );
+              }
+
+              // Move to next node
+              const nextNodeId = getNextNodeId();
+              if (nextNodeId) {
+                moveToNextNode(nextNodeId);
+              }
+            }}
+          />
+        );
+
       default:
         return (
           <div className="space-y-4">
@@ -954,10 +1309,58 @@ export default function EnhancedActivityPlayer({
     }
   };
 
+  // Show misconceptions review if needed (check when we reach end node)
+  // This MUST be before any conditional returns to follow React hooks rules
+  useEffect(() => {
+    if (currentNode?.type === "end" && !hasCheckedMisconceptions) {
+      console.log("🎯 End node reached, checking for misconceptions...");
+      // Wait a bit for any review analysis to complete
+      const timer = setTimeout(() => {
+        checkForMisconceptions();
+      }, 2000); // Wait 2 seconds for analysis to complete
+      
+      return () => clearTimeout(timer);
+    }
+  }, [currentNode?.id, hasCheckedMisconceptions]);
+
   if (!currentNode) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="h-8 w-8 animate-spin" />
+      </div>
+    );
+  }
+
+  // Show misconceptions review if needed
+  if (showMisconceptionsReview) {
+    return (
+      <div className="max-w-4xl mx-auto p-6">
+        <MisconceptionsReview
+          activityId={activity.id}
+          initialMisconceptions={
+            pendingReviewAnalysis?.misconceptions || undefined
+          }
+          analysisSummary={
+            pendingReviewAnalysis
+              ? {
+                  overall_assessment:
+                    pendingReviewAnalysis.overall_assessment,
+                  recommended_review:
+                    pendingReviewAnalysis.recommended_review,
+                  strengths:
+                    pendingReviewAnalysis.strengths ||
+                    pendingReviewAnalysis.concepts_understood,
+                }
+              : undefined
+          }
+          onComplete={() => {
+            setShowMisconceptionsReview(false);
+            setPendingReviewAnalysis(null);
+            if (currentNode.type === "end") {
+              handleActivityComplete();
+            }
+          }}
+        />
       </div>
     );
   }

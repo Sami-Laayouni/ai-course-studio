@@ -1,36 +1,36 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 /**
- * Creates a Supabase client with service role key
- * This bypasses RLS and should ONLY be used in server-side API routes
- * NEVER expose this client to the client-side code
+ * Service role client for server-side operations that need to bypass RLS
+ * Use this ONLY in API routes, never expose to client
  */
 export function createServiceClient() {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const rawUrl =
+    process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL ?? "";
+  const rawServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
 
-  if (!supabaseUrl) {
-    throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL environment variable");
-  }
-  
-  if (!serviceRoleKey) {
-    throw new Error("Missing SUPABASE_SERVICE_ROLE_KEY environment variable. Please set this in your .env.local file or Vercel environment variables.");
+  const supabaseUrl = rawUrl.trim();
+  const supabaseServiceKey = rawServiceKey
+    .trim()
+    .replace(/\\n/g, "")
+    .replace(/\s+/g, "");
+
+  if (!supabaseUrl || !supabaseServiceKey) {
+    throw new Error(
+      "Missing Supabase environment variables for service client"
+    );
   }
 
-  // Validate that the service role key looks correct (starts with 'eyJ' for JWT)
-  if (!serviceRoleKey.startsWith('eyJ')) {
-    console.warn("Warning: SUPABASE_SERVICE_ROLE_KEY doesn't look like a valid JWT token. Make sure you're using the service_role key, not the anon key.");
+  if (!supabaseServiceKey.startsWith("eyJ")) {
+    console.warn(
+      "Supabase service role key does not appear to be a valid JWT. Double-check SUPABASE_SERVICE_ROLE_KEY."
+    );
   }
 
-  return createSupabaseClient(
-    supabaseUrl,
-    serviceRoleKey,
-    {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
-      },
-    }
-  );
+  return createSupabaseClient(supabaseUrl, supabaseServiceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
 }
-

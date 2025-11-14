@@ -87,20 +87,15 @@ Return a JSON object with this exact structure:
 Make sure the question is engaging and tests real understanding, not just memorization.`;
 
     // Generate AI response
-    if (!process.env.GOOGLE_AI_API_KEY) {
-      return NextResponse.json(
-        { error: "API key not configured" },
-        { status: 500 }
-      );
-    }
+    requireAIConfiguration();
 
     const config = {
-      responseMimeType: "text/plain",
+      ...getDefaultConfig(),
       maxOutputTokens: 500,
     };
 
-    const response = await genAI.models.generateContentStream({
-      model: "gemini-2.0-flash-lite",
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
       config,
       contents: [
         {

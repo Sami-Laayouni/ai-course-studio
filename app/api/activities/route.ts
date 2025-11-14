@@ -1,6 +1,165 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { runEarlAnalysis } from "@/lib/earl-analyzer";
+import { generateContent, createCacheKey } from "@/lib/genai-utils";
+
+type ActivityContent = {
+  nodes?: any[];
+  context_sources?: any[];
+  [key: string]: any;
+};
+
+const buildContextText = (
+  nodeConfig: any = {},
+  contextSources: any[] = []
+) => {
+  let contextText = nodeConfig.context || "";
+
+  if (Array.isArray(contextSources) && contextSources.length > 0) {
+    const parts = contextSources
+      .map((source) => {
+        if (!source) return "";
+        if (source.type === "document" || source.type === "pdf") {
+          return `Document: ${source.title || "Untitled"}\n${
+            source.summary || ""
+          }\nKey Points: ${(source.key_points || []).join(", ")}`;
+        }
+        if (source.type === "youtube" || source.type === "video") {
+          return `Video: ${source.title || "Untitled"}\n${
+            source.summary || ""
+          }\nKey Concepts: ${(source.key_concepts || []).join(", ")}`;
+        }
+        return "";
+      })
+      .filter(Boolean);
+    contextText = `${parts.join("\n\n")}\n\n${contextText}`.trim();
+  }
+
+  return contextText;
+};
+
+const parseFlashcardTerms = (text: string, fallbackCount: number) => {
+  if (!text) return [];
+
+  const jsonMatch = text.match(/\[[\s\S]*\]/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => (typeof item === "string" ? item.trim() : null))
+          .filter(Boolean);
+      }
+    } catch (error) {
+      console.warn("⚠️ Failed to parse flashcard terms JSON:", error);
+    }
+  }
+
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("[") && !line.startsWith("]"));
+
+  return lines.slice(0, fallbackCount);
+};
+
+const generateFlashcardTerms = async (
+  contextText: string,
+  numTerms: number,
+  cacheSalt: string
+) => {
+  if (!contextText) return [];
+
+  const prompt = `Based on the following context from documents and videos, generate ${
+    numTerms || 10
+  } important terms/concepts that students should learn. Return only a JSON array of term strings, nothing else.
+
+Context:
+${contextText}
+
+Return a JSON array like: ["Term 1", "Term 2", "Term 3", ...]`;
+
+  const cacheKey = createCacheKey(
+    "generate-flashcards",
+    cacheSalt,
+    numTerms,
+    contextText.substring(0, 100)
+  );
+
+  let text = "";
+  try {
+    text = await generateContent(prompt, {
+      maxRetries: 0, // No retries - use API as intended
+      cacheKey,
+      endpoint: "generate-flashcards",
+      minInterval: 3000,
+    });
+  } catch (error) {
+    console.error("❌ Failed to generate flashcards during activity creation:", error);
+    return [];
+  }
+
+  return parseFlashcardTerms(text, numTerms || 10);
+};
+
+const enrichContentWithFlashcards = async (
+  content: ActivityContent,
+  cacheSalt: string
+): Promise<ActivityContent> => {
+  if (!content || !Array.isArray(content.nodes)) {
+    return content;
+  }
+
+  const clonedContent: ActivityContent = {
+    ...content,
+    nodes: content.nodes.map((node) => ({ ...node, config: { ...(node.config || {}) } })),
+  };
+
+  const contextSources = clonedContent.context_sources || [];
+
+  for (const node of clonedContent.nodes || []) {
+    if (
+      node.type === "review" &&
+      node.config?.review_type === "flashcards" &&
+      (!Array.isArray(node.config.flashcard_terms) ||
+        node.config.flashcard_terms.length === 0)
+    ) {
+      console.log(`🔄 Generating flashcards for review node: ${node.id}`);
+      const contextText = buildContextText(node.config, contextSources);
+      if (!contextText) {
+        console.warn(`⚠️ No context found for flashcard node ${node.id}, skipping generation`);
+        continue;
+      }
+
+      const terms = await generateFlashcardTerms(
+        contextText,
+        node.config.num_terms || 10,
+        `${cacheSalt}-${node.id}`
+      );
+
+      if (terms.length > 0) {
+        node.config.flashcard_terms = terms.map((term: string, index: number) => ({
+          id: `generated-${index}`,
+          term,
+        }));
+        node.config.flashcards_generated_at = new Date().toISOString();
+        console.log(`✅ Generated ${terms.length} flashcard terms for node ${node.id}`);
+      } else {
+        console.warn(`⚠️ Failed to generate flashcard terms for node ${node.id}`);
+      }
+    } else if (
+      node.type === "review" &&
+      node.config?.review_type === "flashcards" &&
+      Array.isArray(node.config.flashcard_terms) &&
+      node.config.flashcard_terms.length > 0
+    ) {
+      console.log(`✅ Node ${node.id} already has ${node.config.flashcard_terms.length} pre-generated flashcard terms, skipping`);
+    }
+  }
+
+  return clonedContent;
+};
+
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,6 +177,7 @@ export async function POST(request: NextRequest) {
       difficulty_level = 3,
       is_adaptive = true,
       is_collaborative = false,
+      assigned_to,
       // Removed columns that don't exist: activity_subtype, is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking
       collaboration_settings = {},
     } = body;
@@ -32,11 +192,24 @@ export async function POST(request: NextRequest) {
 
     const supabase = await createClient();
 
+    let processedContent: ActivityContent | undefined = undefined;
+    try {
+      if (content) {
+        processedContent = await enrichContentWithFlashcards(
+          content as ActivityContent,
+          `${course_id || ""}-${title || "activity"}`
+        );
+      }
+    } catch (flashcardError) {
+      console.error("⚠️ Failed to pre-generate flashcards:", flashcardError);
+      processedContent = content as ActivityContent;
+    }
+
     // Create the activity - only use columns that exist in the database
     const activityData: any = {
       title,
       description: description || "",
-      content: content || {},
+      content: processedContent || content || {},
       course_id,
       activity_type,
       order_index,
@@ -47,6 +220,11 @@ export async function POST(request: NextRequest) {
       // Removed columns that don't exist: activity_subtype, is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking
       // collaboration_settings might not exist either, so we'll only add it if it's provided
     };
+
+    // Add assigned_to if provided (can be "all" or array of student IDs)
+    if (assigned_to !== undefined) {
+      activityData.assigned_to = assigned_to;
+    }
 
     // Only add collaboration_settings if it exists and is provided
     if (
@@ -66,6 +244,9 @@ export async function POST(request: NextRequest) {
         console.log("lesson_id column might not exist, skipping...");
       }
     }
+
+    // Set is_published to false by default (activities must be explicitly published)
+    activityData.is_published = false;
 
     // Add points if it exists (from migration)
     if (points) {
@@ -154,6 +335,7 @@ export async function PUT(request: NextRequest) {
       difficulty_level,
       is_adaptive,
       is_collaborative,
+      assigned_to,
       // Removed columns that don't exist: activity_subtype, is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking
       collaboration_settings,
     } = body;
@@ -173,7 +355,19 @@ export async function PUT(request: NextRequest) {
 
     if (title !== undefined) activityData.title = title;
     if (description !== undefined) activityData.description = description || "";
-    if (content !== undefined) activityData.content = content || {};
+    if (content !== undefined) {
+      try {
+        const cacheSalt = `${course_id || id || ""}-${title || "activity"}`;
+        const processed = await enrichContentWithFlashcards(
+          content as ActivityContent,
+          cacheSalt
+        );
+        activityData.content = processed || {};
+      } catch (flashcardError) {
+        console.error("⚠️ Failed to pre-generate flashcards on update:", flashcardError);
+        activityData.content = content || {};
+      }
+    }
     if (course_id !== undefined) activityData.course_id = course_id;
     if (activity_type !== undefined) activityData.activity_type = activity_type;
     // Removed: activity_subtype (doesn't exist)
@@ -188,6 +382,7 @@ export async function PUT(request: NextRequest) {
     // Removed: is_enhanced, is_conditional, supports_upload, supports_slideshow, performance_tracking (don't exist)
     if (points !== undefined) activityData.points = points;
     if (lesson_id !== undefined) activityData.lesson_id = lesson_id;
+    if (assigned_to !== undefined) activityData.assigned_to = assigned_to;
     // Removed: collaboration_settings (might not exist)
 
     const { data: activity, error } = await supabase

@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
-import genAI from "@/lib/genai";
+import { ai, getModelName, getDefaultConfig, requireAIConfiguration } from "@/lib/ai-config";
 
 /**
  * Enhanced AI Chat API with Advanced Teaching Capabilities
@@ -147,12 +147,7 @@ Student's message: "${message}"
 
 Respond with exceptional teaching that adapts to the student's needs. If a visual diagram would help, generate one. Be engaging, clear, and supportive.`;
 
-    if (!process.env.GOOGLE_AI_API_KEY) {
-      return NextResponse.json(
-        { error: "Google AI API key not configured" },
-        { status: 500 }
-      );
-    }
+    requireAIConfiguration();
 
     console.log("🤖 Enhanced AI Chat: Generating response...");
     console.log("📊 Learning Style:", learning_style);
@@ -169,8 +164,8 @@ Respond with exceptional teaching that adapts to the student's needs. If a visua
       ],
     };
 
-    const response = await genAI.models.generateContentStream({
-      model: "gemini-2.0-flash-lite",
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
       config,
       contents: [
         {
@@ -403,7 +398,7 @@ Return ONLY a valid JSON object:
 Only include concepts from the learning objectives.`;
 
   try {
-    if (!process.env.GOOGLE_AI_API_KEY) {
+    if (!process.env.GOOGLE_PROJECT_ID || !process.env.GOOGLE_CLIENT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
       throw new Error("API key not configured");
     }
 
@@ -412,8 +407,8 @@ Only include concepts from the learning objectives.`;
       maxOutputTokens: 500,
     };
 
-    const response = await genAI.models.generateContentStream({
-      model: "gemini-2.0-flash-lite",
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
       config,
       contents: [
         {

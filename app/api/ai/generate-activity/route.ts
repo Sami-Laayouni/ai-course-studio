@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
           meta: { mode: freeform_prompt ? "freeform" : "typed" },
         },
         content_type: "activity_react_component",
-        model_used: "gemini-2.0-flash-lite",
+        model_used: (await import("@/lib/ai-config")).getModelName(),
       });
 
       const title =
@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
         prompt: agent.initialPrompt,
         generated_content: agent.activity,
         content_type: "activity_custom_freeform",
-        model_used: "gemini-2.0-flash-lite",
+        model_used: (await import("@/lib/ai-config")).getModelName(),
       });
 
       const normalized = normalizeForPreview(agent.activity, freeform_prompt);
@@ -220,7 +220,7 @@ export async function POST(request: NextRequest) {
       prompt: prompt,
       generated_content: generatedContent,
       content_type: `activity_${activity_type}`,
-      model_used: "gemini-2.0-flash-lite",
+      model_used: (await import("@/lib/ai-config")).getModelName(),
     });
 
     const normalized = normalizeForPreview(generatedContent, prompt);
@@ -360,8 +360,9 @@ async function generateTextFromGenAI(
   prompt: string,
   temperature: number
 ): Promise<string> {
-  const response = await genAI.models.generateContent({
-    model: "gemini-2.0-flash-lite",
+  const { ai, getModelName } = await import("@/lib/ai-config");
+  const response = await ai.models.generateContent({
+    model: getModelName(),
     contents: [
       {
         role: "user",

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import genAI from "@/lib/genai";
+import { ai, getModelName, getDefaultConfig, requireAIConfiguration } from "@/lib/ai-config";
 
 export const dynamic = 'force-dynamic';
 
@@ -29,15 +29,11 @@ Format your response as JSON:
   "keyConcepts": ["concept 1", "concept 2", ...]
 }`;
 
-    if (!process.env.GOOGLE_AI_API_KEY) {
-      return NextResponse.json(
-        { error: "Google AI API key not configured" },
-        { status: 500 }
-      );
-    }
+    requireAIConfiguration();
 
     const config = {
-      responseMimeType: "application/json",
+      ...getDefaultConfig(),
+      responseMimeType: "application/json" as const,
       maxOutputTokens: 1000,
       systemInstruction: [
         {
@@ -46,8 +42,8 @@ Format your response as JSON:
       ],
     };
 
-    const response = await genAI.models.generateContentStream({
-      model: "gemini-2.0-flash-lite",
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
       config,
       contents: [
         {

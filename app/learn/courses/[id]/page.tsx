@@ -48,6 +48,7 @@ export default async function StudentCoursePage({ params }: CoursePageProps) {
   // This ensures activities are visible even if lessons aren't published
   const { data: allActivitiesData } = await supabase
     .from("activities")
+    .eq("is_published", true) // Only show published activities to students
     .select(`
       id, title, description, activity_type, difficulty_level,
       estimated_duration, order_index, points, lesson_id,

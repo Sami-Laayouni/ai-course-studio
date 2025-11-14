@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import genAI from "@/lib/genai";
+import { ai, getModelName, getDefaultConfig, isAIConfigured } from "@/lib/ai-config";
 
 export const dynamic = 'force-dynamic';
 
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
     if (
       conditionType === "performance" &&
       useAIClassification &&
-      process.env.GOOGLE_AI_API_KEY
+      isAIConfigured()
     ) {
       // Use AI to classify performance
       const contextText = contextSources
@@ -107,12 +107,13 @@ Respond with JSON:
 }`;
 
       try {
-        if (!process.env.GOOGLE_AI_API_KEY) {
-          throw new Error("Google AI API key not configured");
+        if (!isAIConfigured()) {
+          throw new Error("GEMINI_API_KEY not configured");
         }
 
         const config = {
-          responseMimeType: "application/json",
+          ...getDefaultConfig(),
+          responseMimeType: "application/json" as const,
           maxOutputTokens: 500,
           systemInstruction: [
             {
@@ -121,8 +122,8 @@ Respond with JSON:
           ],
         };
 
-        const response = await genAI.models.generateContentStream({
-          model: "gemini-2.0-flash-lite",
+        const response = await ai.models.generateContentStream({
+          model: getModelName(),
           config,
           contents: [
             {

@@ -98,8 +98,9 @@ async function generateTextFromGenAI(
   prompt: string,
   temperature: number
 ): Promise<string> {
-  const response = await genAI.models.generateContent({
-    model: "gemini-2.0-flash-lite",
+  const { ai, getModelName } = await import("@/lib/ai-config");
+  const response = await ai.models.generateContent({
+    model: getModelName(),
     contents: [
       {
         role: "user",
