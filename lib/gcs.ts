@@ -6,14 +6,31 @@ let bucket: any;
 let bucketName: string;
 
 try {
-  if (!process.env.GOOGLE_PROJECT_ID || !process.env.GOOGLE_CLIENT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
+  // Check for required environment variables
+  const projectId = process.env.GOOGLE_PROJECT_ID;
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+  
+  if (!projectId || !clientEmail || !privateKey) {
     console.warn("⚠️ [GCS] Missing Google Cloud credentials. GCS features will not work.");
+    console.warn("   Required: GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY");
+    console.warn("   Check your .env.local file");
   } else {
+    // Fix private key format - ensure proper line breaks
+    let formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
+    
+    // Validate private key format
+    if (!formattedPrivateKey.includes('BEGIN') || !formattedPrivateKey.includes('END')) {
+      console.error("❌ [GCS] Private key format appears invalid");
+      console.error("   Expected format: -----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----");
+      throw new Error("Invalid private key format");
+    }
+    
     storage = new Storage({
-      projectId: process.env.GOOGLE_PROJECT_ID,
+      projectId: projectId,
       credentials: {
-        client_email: process.env.GOOGLE_CLIENT_EMAIL,
-        private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+        client_email: clientEmail,
+        private_key: formattedPrivateKey,
       },
     });
 

@@ -63,8 +63,6 @@ export function Sidebar({ userRole }: SidebarProps) {
         return [
           { href: "/dashboard", label: "Dashboard", icon: Home },
           { href: "/dashboard/courses", label: "My Courses", icon: BookOpen },
-
-          { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
         ];
       case "student":
         return [{ href: "/learn", label: "My Learning", icon: GraduationCap }];

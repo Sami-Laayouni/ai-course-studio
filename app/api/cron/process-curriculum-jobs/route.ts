@@ -15,7 +15,7 @@ export const dynamic = 'force-dynamic';
  * Setup:
  * 1. Set CRON_SECRET in your environment variables
  * 2. Configure your cron service to call: GET /api/cron/process-curriculum-jobs?cron_secret=YOUR_SECRET
- * 3. Recommended schedule: Every 5 minutes (*/5 * * * *)
+ * 3. Recommended schedule: Every 5 minutes
  */
 export async function GET(request: NextRequest) {
   try {

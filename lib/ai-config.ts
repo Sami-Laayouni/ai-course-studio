@@ -74,24 +74,43 @@ let ai: GoogleGenAI | null = null;
 function initializeAI() {
   if (ai) return ai;
 
-  if (!process.env.GOOGLE_PROJECT_ID || !process.env.GOOGLE_CLIENT_EMAIL || !process.env.GOOGLE_PRIVATE_KEY) {
-    console.error("⚠️ Missing Google Cloud credentials for AI");
-    console.error("   Required: GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, GOOGLE_PRIVATE_KEY");
+  const projectId = process.env.GOOGLE_PROJECT_ID;
+  const clientEmail = process.env.GOOGLE_CLIENT_EMAIL;
+  const privateKey = process.env.GOOGLE_PRIVATE_KEY;
+  
+  if (!projectId || !clientEmail || !privateKey) {
+    console.error("⚠️ [AI] Missing Google Cloud credentials for AI");
+    console.error("   Required environment variables:");
+    console.error("   - GOOGLE_PROJECT_ID");
+    console.error("   - GOOGLE_CLIENT_EMAIL");
+    console.error("   - GOOGLE_PRIVATE_KEY");
+    console.error("   Add these to your .env.local file");
     console.error("   AI features will not work without these credentials");
     return null;
   }
 
   try {
-    // Initialize with service account credentials - same pattern as Document AI and GCS
+    // Fix private key format - ensure proper line breaks
+    let formattedPrivateKey = privateKey.replace(/\\n/g, '\n');
+    
+    // Validate private key format
+    if (!formattedPrivateKey.includes('BEGIN') || !formattedPrivateKey.includes('END')) {
+      console.error("❌ [AI] Private key format appears invalid");
+      console.error("   Expected format: -----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----");
+      console.error("   Get your private key from Google Cloud Console > Service Accounts > Keys");
+      throw new Error("Invalid private key format - must include BEGIN/END markers");
+    }
+    
+    // Initialize with service account credentials
     // @google/genai supports Vertex AI mode with service account credentials
     // Explicitly set scopes for Generative Language API access
     ai = new GoogleGenAI({
-      project: process.env.GOOGLE_PROJECT_ID,
+      project: projectId,
       location: process.env.GOOGLE_CLOUD_LOCATION || "us-central1",
       googleAuthOptions: {
         credentials: {
-          client_email: process.env.GOOGLE_CLIENT_EMAIL,
-          private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+          client_email: clientEmail,
+          private_key: formattedPrivateKey,
         },
         scopes: [
           'https://www.googleapis.com/auth/generative-language',
