@@ -280,8 +280,10 @@ export async function POST(request: NextRequest) {
       .single();
 
     const latestContent = latestActivity?.content || contentObj;
+    const hasDefaultQuestion = latestContent.captivating_question === "What would you like to learn from this activity?";
 
-    if (!latestContent.earl_generated || !latestContent.captivating_question) {
+    // Run Earl if: not generated yet, no question, or has default question
+    if (!latestContent.earl_generated || !latestContent.captivating_question || hasDefaultQuestion) {
       // Run Earl analysis asynchronously (don't block activity creation)
       // Use longer delay to prevent race conditions and concurrent calls
       setTimeout(() => {

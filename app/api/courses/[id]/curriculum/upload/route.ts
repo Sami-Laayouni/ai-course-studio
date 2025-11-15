@@ -1,17 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { createClient } from "@/lib/supabase/server";
 import { bucket, bucketName } from "@/lib/gcs";
 import { ai, getModelName, getDefaultConfig } from "@/lib/ai-config";
-
-// Initialize Document AI client using environment variables
-const documentAI = new DocumentProcessorServiceClient({
-  projectId: process.env.GOOGLE_PROJECT_ID,
-  credentials: {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-  },
-});
+import pdfParse from "pdf-parse";
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic'; // This route uses cookies/auth, must be dynamic
@@ -206,30 +197,19 @@ export async function POST(
     let sections: any[] = [];
 
     if (contentType === "application/pdf") {
-      console.log("📤 [CURRICULUM UPLOAD] Processing PDF with Document AI...");
+      console.log("📤 [CURRICULUM UPLOAD] Processing PDF with pdf-parse...");
       try {
-        if (!process.env.GOOGLE_PROJECT_ID || !process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID) {
-          console.warn("⚠️ [CURRICULUM UPLOAD] Document AI not configured, skipping text extraction");
-        } else {
-          const processorName = `projects/${process.env.GOOGLE_PROJECT_ID}/locations/us/processors/${process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID}`;
-          console.log("📤 [CURRICULUM UPLOAD] Using processor:", processorName);
-          
-          const [result] = await documentAI.processDocument({
-            name: processorName,
-            rawDocument: {
-              content: buffer,
-              mimeType: contentType,
-            },
-          });
-
-          extractedText = result.document?.text || "";
-          console.log("✅ [CURRICULUM UPLOAD] Text extracted. Length:", extractedText.length);
-          
-          if (extractedText) {
-            console.log("📤 [CURRICULUM UPLOAD] Extracting sections from text...");
-            sections = await extractSections(extractedText);
-            console.log("✅ [CURRICULUM UPLOAD] Sections extracted:", sections.length);
-          }
+        const pdfData = await pdfParse(buffer);
+        extractedText = pdfData.text || "";
+        console.log("✅ [CURRICULUM UPLOAD] Text extracted. Length:", extractedText.length);
+        
+        // Extract sections if we have text
+        if (extractedText && extractedText.length > 100) {
+          console.log("📤 [CURRICULUM UPLOAD] Extracting sections from text...");
+          sections = await extractSections(extractedText);
+          console.log("✅ [CURRICULUM UPLOAD] Sections extracted:", sections.length);
+        } else if (extractedText.length > 0) {
+          console.warn("⚠️ [CURRICULUM UPLOAD] Extracted text is too short, skipping section extraction");
         }
       } catch (error: any) {
         console.error("❌ [CURRICULUM UPLOAD] Error extracting text:", error);
@@ -238,6 +218,8 @@ export async function POST(
           code: error.code,
           stack: error.stack
         });
+        // Continue without text - background job will try again
+        extractedText = "";
       }
     } else {
       console.log("📤 [CURRICULUM UPLOAD] File type is not PDF, skipping text extraction. Type:", contentType);

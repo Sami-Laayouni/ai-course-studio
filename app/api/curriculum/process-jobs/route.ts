@@ -1,17 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { bucket } from "@/lib/gcs";
-import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import { ai, getModelName, getDefaultConfig } from "@/lib/ai-config";
-
-// Initialize Document AI client using environment variables
-const documentAI = new DocumentProcessorServiceClient({
-  projectId: process.env.GOOGLE_PROJECT_ID,
-  credentials: {
-    client_email: process.env.GOOGLE_CLIENT_EMAIL,
-    private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
-  },
-});
+import pdfParse from "pdf-parse";
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic'; // This route uses cookies/auth, must be dynamic
@@ -78,8 +69,8 @@ ${text.substring(0, 5000)}...`;
   }));
 }
 
-// Process a single job
-async function processJob(job: any, supabase: any) {
+// Process a single job - exported for use by cron endpoint
+export async function processJob(job: any, supabase: any) {
   const { id, curriculum_document_id, course_id, job_type } = job;
 
   try {
@@ -144,15 +135,20 @@ async function processJob(job: any, supabase: any) {
         
         const [buffer] = await file.download();
 
-        const [result] = await documentAI.processDocument({
-          name: `projects/${process.env.GOOGLE_PROJECT_ID}/locations/us/processors/${process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID}`,
-          rawDocument: {
-            content: buffer,
-            mimeType: "application/pdf",
-          },
-        });
-
-        extractedText = result.document?.text || "";
+        // Extract text using pdf-parse
+        console.log("📤 [PROCESS-JOBS] Extracting text from PDF using pdf-parse...");
+        try {
+          const pdfData = await pdfParse(buffer);
+          extractedText = pdfData.text || "";
+          console.log("✅ [PROCESS-JOBS] Text extracted. Length:", extractedText.length);
+          
+          if (!extractedText || extractedText.length < 100) {
+            throw new Error("Extracted text is too short or empty. PDF may be image-based or corrupted.");
+          }
+        } catch (parseError: any) {
+          console.error("❌ [PROCESS-JOBS] PDF parsing failed:", parseError);
+          throw new Error(`Failed to extract text from PDF: ${parseError.message}`);
+        }
 
         // Update extracted text
         await supabase

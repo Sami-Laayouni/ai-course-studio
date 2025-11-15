@@ -26,7 +26,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const prompt = `Based on the following context from documents and videos, generate ${num_terms || 10} important terms/concepts that students should learn. Return only a JSON array of term strings, nothing else.
+    const prompt = `Based on the following context from documents and videos, generate ${num_terms || 10} important terms/concepts that students should learn. 
+
+IMPORTANT: If the context contains mathematical notation (like x^2, H2O, sqrt(x), fractions, equations), you may include mathematical terms in your response. Use simple notation that can be rendered (e.g., "x^2" for x squared, "H2O" for water, "sqrt(x)" for square root).
+
+Return only a JSON array of term strings, nothing else.
 
 Context:
 ${context}

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -92,12 +92,19 @@ export default function MisconceptionsReview({
   const [summary, setSummary] = useState<ReviewSummary | undefined>(
     analysisSummary
   );
+  const hasLoadedRef = useRef(false);
   const supabase = createClient();
 
   const loadMisconceptions = async (skipLoading = false) => {
+    // Prevent multiple simultaneous loads
+    if (hasLoadedRef.current && !skipLoading) {
+      return;
+    }
+
     try {
       if (!skipLoading) {
         setIsLoading(true);
+        hasLoadedRef.current = true;
       }
 
       const {
@@ -145,6 +152,11 @@ export default function MisconceptionsReview({
   };
 
   useEffect(() => {
+    // Reset loading state when activityId changes
+    if (hasLoadedRef.current) {
+      hasLoadedRef.current = false;
+    }
+
     let skipInitialLoading = false;
 
     if (initialMisconceptions && initialMisconceptions.length > 0) {
@@ -152,14 +164,16 @@ export default function MisconceptionsReview({
       skipInitialLoading = true;
     }
 
-    setSummary(analysisSummary);
-    loadMisconceptions(skipInitialLoading);
+    if (analysisSummary) {
+      setSummary(analysisSummary);
+    }
+
+    // Only load if not already loaded
+    if (!hasLoadedRef.current) {
+      loadMisconceptions(skipInitialLoading);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    activityId,
-    JSON.stringify(initialMisconceptions ?? []),
-    analysisSummary,
-  ]);
+  }, [activityId]);
 
   const markAllMisconceptionsResolved = async () => {
     try {

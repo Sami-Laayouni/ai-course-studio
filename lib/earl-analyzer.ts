@@ -240,11 +240,40 @@ export async function runEarlAnalysis(activity: any, supabase: any) {
       console.error("Earl: Error fetching course context sources:", error);
     }
 
+    // Extract content from activity nodes (especially review nodes with context)
+    let nodeContext = "";
+    if (contentObj.nodes && Array.isArray(contentObj.nodes)) {
+      for (const node of contentObj.nodes) {
+        // Extract context from review nodes
+        if (node.type === "review" && node.config?.context) {
+          nodeContext += `\nReview Content:\n${node.config.context}\n`;
+        }
+        // Extract context from other node types that might have content
+        if (node.config?.content) {
+          nodeContext += `\n${node.type} Content:\n${node.config.content}\n`;
+        }
+        if (node.config?.text) {
+          nodeContext += `\n${node.type} Text:\n${node.config.text}\n`;
+        }
+        // Extract from flashcard terms if available
+        if (node.config?.flashcard_terms && Array.isArray(node.config.flashcard_terms)) {
+          const terms = node.config.flashcard_terms.map((t: any) => t.term || t).join(", ");
+          if (terms) {
+            nodeContext += `\nKey Terms: ${terms}\n`;
+          }
+        }
+      }
+      if (nodeContext) {
+        console.log(`Earl: Extracted ${nodeContext.length} characters from activity nodes`);
+      }
+    }
+
     // Call Earl to generate captivating question
     if (
       youtubeTranscripts.length > 0 ||
       pdfTexts.length > 0 ||
       contextSources.length > 0 ||
+      nodeContext ||
       activity.title ||
       activity.description
     ) {
@@ -260,6 +289,7 @@ export async function runEarlAnalysis(activity: any, supabase: any) {
           youtubeTranscriptsCount: youtubeTranscripts.length,
           pdfTextsCount: pdfTexts.length,
           contextSourcesCount: contextSources.length,
+          nodeContextLength: nodeContext.length,
         });
 
         const earlResponse = await fetch(earlUrl, {
@@ -271,6 +301,7 @@ export async function runEarlAnalysis(activity: any, supabase: any) {
             youtubeTranscripts,
             pdfTexts,
             contextSources,
+            nodeContext: nodeContext || undefined, // Add node context
           }),
         });
 

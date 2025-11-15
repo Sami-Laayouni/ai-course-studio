@@ -175,9 +175,96 @@ BEGIN
   END IF;
 END $$;
 
+-- Helper function to upsert curriculum section embedding with proper vector casting
+CREATE OR REPLACE FUNCTION upsert_curriculum_section_embedding(
+  p_curriculum_document_id UUID,
+  p_section_id TEXT,
+  p_section_title TEXT,
+  p_section_text TEXT,
+  p_embedding TEXT, -- Pass as string '[1,2,3,...]'
+  p_page_number INTEGER DEFAULT NULL,
+  p_concepts TEXT[] DEFAULT ARRAY[]::TEXT[]
+)
+RETURNS UUID AS $$
+DECLARE
+  v_id UUID;
+BEGIN
+  INSERT INTO curriculum_section_embeddings (
+    curriculum_document_id,
+    section_id,
+    section_title,
+    section_text,
+    embedding,
+    page_number,
+    concepts
+  )
+  VALUES (
+    p_curriculum_document_id,
+    p_section_id,
+    p_section_title,
+    p_section_text,
+    p_embedding::vector, -- Cast string to vector type
+    p_page_number,
+    p_concepts
+  )
+  ON CONFLICT (curriculum_document_id, section_id)
+  DO UPDATE SET
+    section_title = EXCLUDED.section_title,
+    section_text = EXCLUDED.section_text,
+    embedding = EXCLUDED.embedding,
+    page_number = EXCLUDED.page_number,
+    concepts = EXCLUDED.concepts,
+    updated_at = NOW()
+  RETURNING id INTO v_id;
+  
+  RETURN v_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Helper function to upsert activity embedding with proper vector casting
+CREATE OR REPLACE FUNCTION upsert_activity_embedding(
+  p_activity_id UUID,
+  p_activity_title TEXT,
+  p_activity_description TEXT,
+  p_activity_content TEXT,
+  p_embedding TEXT -- Pass as string '[1,2,3,...]'
+)
+RETURNS UUID AS $$
+DECLARE
+  v_id UUID;
+BEGIN
+  INSERT INTO activity_embeddings (
+    activity_id,
+    activity_title,
+    activity_description,
+    activity_content,
+    embedding
+  )
+  VALUES (
+    p_activity_id,
+    p_activity_title,
+    p_activity_description,
+    p_activity_content,
+    p_embedding::vector -- Cast string to vector type
+  )
+  ON CONFLICT (activity_id)
+  DO UPDATE SET
+    activity_title = EXCLUDED.activity_title,
+    activity_description = EXCLUDED.activity_description,
+    activity_content = EXCLUDED.activity_content,
+    embedding = EXCLUDED.embedding,
+    updated_at = NOW()
+  RETURNING id INTO v_id;
+  
+  RETURN v_id;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Comments
 COMMENT ON TABLE curriculum_section_embeddings IS 'Stores vector embeddings for curriculum document sections using Gemini embedding-001';
 COMMENT ON TABLE activity_embeddings IS 'Stores vector embeddings for activities to enable semantic matching with curriculum sections';
 COMMENT ON FUNCTION find_similar_curriculum_sections IS 'Finds curriculum sections similar to an activity using cosine similarity';
 COMMENT ON FUNCTION update_activity_curriculum_mappings IS 'Updates activity-curriculum mappings based on vector similarity';
+COMMENT ON FUNCTION upsert_curriculum_section_embedding IS 'Upserts curriculum section embedding with proper vector type casting';
+COMMENT ON FUNCTION upsert_activity_embedding IS 'Upserts activity embedding with proper vector type casting';
 

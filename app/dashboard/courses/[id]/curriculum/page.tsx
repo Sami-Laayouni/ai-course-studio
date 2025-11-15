@@ -405,13 +405,30 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
   const updateSectionHighlights = (analytics: SectionAnalytics) => {
     const highlights = new Map<string, string>();
     
-    // Green for concepts students understand well (score > 70%)
+    // Determine overall section performance based on average score
+    const avgScore = analytics.average_score || 0;
+    let sectionColor = "";
+    if (avgScore >= 70) {
+      sectionColor = "green";
+    } else if (avgScore >= 50) {
+      sectionColor = "yellow";
+    } else {
+      sectionColor = "red";
+    }
+    
+    // Store section-level color
+    if (selectedSection) {
+      highlights.set("_section", sectionColor);
+    }
+    
+    // Green for concepts students understand well (score >= 70%)
     if (analytics.performance_insights?.strong_concepts) {
       analytics.performance_insights.strong_concepts.forEach((concept: string) => {
         highlights.set(concept.toLowerCase(), "green");
       });
     }
     
+    // Yellow for concepts students partially understand (50-69%)
     // Red for concepts students struggle with (score < 50%)
     if (analytics.performance_insights?.weak_concepts) {
       analytics.performance_insights.weak_concepts.forEach((concept: string) => {
@@ -419,13 +436,15 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
       });
     }
     
-    // Also highlight based on concept mastery
+    // Also highlight based on concept mastery with three-tier system
     if (analytics.concept_mastery) {
       Object.entries(analytics.concept_mastery).forEach(([concept, mastery]: [string, any]) => {
         const masteryPercent = typeof mastery === "number" ? mastery : parseFloat(mastery) || 0;
         if (masteryPercent >= 70) {
           highlights.set(concept.toLowerCase(), "green");
-        } else if (masteryPercent < 50) {
+        } else if (masteryPercent >= 50) {
+          highlights.set(concept.toLowerCase(), "yellow");
+        } else {
           highlights.set(concept.toLowerCase(), "red");
         }
       });
@@ -655,6 +674,10 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                                     <span>Well understood (≥70%)</span>
                                   </div>
                                   <div className="flex items-center gap-1.5">
+                                    <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                                    <span>Medium understanding (50-69%)</span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
                                     <div className="w-2 h-2 bg-red-500 rounded-full"></div>
                                     <span>Struggling (&lt;50%)</span>
                                   </div>
@@ -694,13 +717,20 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                           const sectionId = section.id || section.title || `section_${index}`;
                           const isSelected = selectedSection === sectionId;
                           
-                          // Get section performance indicator
+                          // Get section performance indicator with three-tier system
                           let sectionColor = "";
+                          let sectionBgColor = "";
                           if (sectionAnalytics && sectionAnalytics.section_id === sectionId) {
-                            if (sectionAnalytics.average_score >= 70) {
+                            const avgScore = sectionAnalytics.average_score || 0;
+                            if (avgScore >= 70) {
                               sectionColor = "border-l-4 border-l-green-500";
-                            } else if (sectionAnalytics.average_score < 50) {
+                              sectionBgColor = "bg-green-50/50 dark:bg-green-950/20";
+                            } else if (avgScore >= 50) {
+                              sectionColor = "border-l-4 border-l-yellow-500";
+                              sectionBgColor = "bg-yellow-50/50 dark:bg-yellow-950/20";
+                            } else {
                               sectionColor = "border-l-4 border-l-red-500";
+                              sectionBgColor = "bg-red-50/50 dark:bg-red-950/20";
                             }
                           }
                           
@@ -711,7 +741,7 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                               className={`w-full text-left p-2.5 rounded-md border transition-colors ${sectionColor} ${
                                 isSelected
                                   ? "bg-primary text-primary-foreground border-primary"
-                                  : "hover:bg-muted"
+                                  : sectionBgColor || "hover:bg-muted"
                               }`}
                             >
                               <div className="flex items-center justify-between">
@@ -726,6 +756,9 @@ export default function CurriculumPage({ params }: CurriculumPageProps) {
                                     <>
                                       {sectionAnalytics.average_score >= 70 && (
                                         <CheckCircle className="h-4 w-4 text-green-500" />
+                                      )}
+                                      {sectionAnalytics.average_score >= 50 && sectionAnalytics.average_score < 70 && (
+                                        <AlertCircle className="h-4 w-4 text-yellow-500" />
                                       )}
                                       {sectionAnalytics.average_score < 50 && (
                                         <AlertCircle className="h-4 w-4 text-red-500" />

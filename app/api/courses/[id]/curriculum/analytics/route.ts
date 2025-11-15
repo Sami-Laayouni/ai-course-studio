@@ -113,9 +113,10 @@ export async function POST(
       const mappedActivityIds = mappings?.map((m) => m.activity_id) || [];
 
       // If no mappings exist, try to auto-map using vector similarity
+      // Also refresh mappings periodically to catch new activities
       if (mappedActivityIds.length === 0 && activities && activities.length > 0) {
         try {
-          // Get section embedding
+          // First, ensure section embedding exists
           const { data: sectionEmbedding } = await supabase
             .from("curriculum_section_embeddings")
             .select("embedding")
@@ -123,56 +124,7 @@ export async function POST(
             .eq("section_id", sectionId)
             .single();
 
-          if (sectionEmbedding && sectionEmbedding.embedding) {
-            // Get all activity embeddings for this course
-            const activityIds = activities.map(a => a.id);
-            const { data: activityEmbeddings } = await supabase
-              .from("activity_embeddings")
-              .select("activity_id, embedding")
-              .in("activity_id", activityIds);
-
-            if (activityEmbeddings && activityEmbeddings.length > 0) {
-              // Calculate similarity for each activity using SQL
-              // Use the update_activity_curriculum_mappings function which handles vector similarity
-              for (const activityEmbedding of activityEmbeddings) {
-                if (!activityEmbedding.embedding) continue;
-
-                try {
-                  // Use the database function to find and create mappings
-                  const { data: mappings } = await supabase.rpc(
-                    'update_activity_curriculum_mappings',
-                    {
-                      p_activity_id: activityEmbedding.activity_id,
-                      p_curriculum_document_id: curriculum_id,
-                      p_similarity_threshold: 0.7
-                    }
-                  );
-
-                  if (mappings && mappings.length > 0) {
-                    const matchingMappings = mappings.filter((m: any) => m.section_id === sectionId);
-                    if (matchingMappings.length > 0) {
-                      mappedActivityIds.push(activityEmbedding.activity_id);
-                    }
-                  }
-                } catch (err) {
-                  console.error(`Error mapping activity ${activityEmbedding.activity_id}:`, err);
-                }
-              }
-            } else {
-              // Generate embeddings for activities that don't have them
-              for (const activity of activities) {
-                try {
-                  await fetch(`${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/activities/generate-embedding`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ activity_id: activity.id }),
-                  });
-                } catch (err) {
-                  console.error(`Error generating embedding for activity ${activity.id}:`, err);
-                }
-              }
-            }
-          } else {
+          if (!sectionEmbedding || !sectionEmbedding.embedding) {
             // Section embedding not found - trigger embedding generation
             console.log(`Section embedding not found for section ${sectionId}, triggering generation...`);
             await fetch(`${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/curriculum/generate-embeddings`, {
@@ -181,8 +133,100 @@ export async function POST(
               body: JSON.stringify({ curriculum_document_id: curriculum_id }),
             }).catch(err => console.error("Error triggering embedding generation:", err));
           }
+
+          // Get all activity embeddings for this course
+          const activityIds = activities.map(a => a.id);
+          const { data: activityEmbeddings } = await supabase
+            .from("activity_embeddings")
+            .select("activity_id, embedding")
+            .in("activity_id", activityIds);
+
+          // Generate embeddings for activities that don't have them
+          if (!activityEmbeddings || activityEmbeddings.length < activities.length) {
+            const missingActivityIds = activities
+              .filter(a => !activityEmbeddings?.some(ae => ae.activity_id === a.id))
+              .map(a => a.id);
+            
+            for (const activityId of missingActivityIds) {
+              try {
+                await fetch(`${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/activities/generate-embedding`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ activity_id: activityId }),
+                });
+              } catch (err) {
+                console.error(`Error generating embedding for activity ${activityId}:`, err);
+              }
+            }
+          }
+
+          // Use the database function to find and create mappings for all activities
+          // This will automatically match activities to relevant sections
+          if (activityEmbeddings && activityEmbeddings.length > 0) {
+            for (const activityEmbedding of activityEmbeddings) {
+              if (!activityEmbedding.embedding) continue;
+
+              try {
+                // Use the database function to find and create mappings
+                // Lower threshold to 0.65 to catch more relevant matches
+                const { data: mappings, error: mappingError } = await supabase.rpc(
+                  'update_activity_curriculum_mappings',
+                  {
+                    p_activity_id: activityEmbedding.activity_id,
+                    p_curriculum_document_id: curriculum_id,
+                    p_similarity_threshold: 0.65 // Lower threshold for better matching
+                  }
+                );
+
+                if (mappingError) {
+                  console.error(`Error mapping activity ${activityEmbedding.activity_id}:`, mappingError);
+                  continue;
+                }
+
+                if (mappings && mappings.length > 0) {
+                  const matchingMappings = mappings.filter((m: any) => m.section_id === sectionId);
+                  if (matchingMappings.length > 0) {
+                    mappedActivityIds.push(activityEmbedding.activity_id);
+                  }
+                }
+              } catch (err) {
+                console.error(`Error mapping activity ${activityEmbedding.activity_id}:`, err);
+              }
+            }
+          }
         } catch (error) {
           console.error("Error auto-mapping activities with vector similarity:", error);
+        }
+      } else if (mappedActivityIds.length > 0) {
+        // Refresh mappings to ensure they're up to date
+        // This helps catch new activities that were added after initial mapping
+        try {
+          const activityIds = activities?.map(a => a.id) || [];
+          for (const activityId of activityIds) {
+            try {
+              await supabase.rpc('update_activity_curriculum_mappings', {
+                p_activity_id: activityId,
+                p_curriculum_document_id: curriculum_id,
+                p_similarity_threshold: 0.65
+              });
+            } catch (err) {
+              // Ignore errors for individual activities
+            }
+          }
+          
+          // Re-fetch mappings after refresh
+          const { data: refreshedMappings } = await supabase
+            .from("activity_curriculum_mappings")
+            .select("activity_id")
+            .eq("curriculum_document_id", curriculum_id)
+            .eq("section_id", sectionId);
+          
+          if (refreshedMappings) {
+            mappedActivityIds.length = 0;
+            mappedActivityIds.push(...refreshedMappings.map(m => m.activity_id));
+          }
+        } catch (error) {
+          console.error("Error refreshing mappings:", error);
         }
       }
 

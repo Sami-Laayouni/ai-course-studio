@@ -40,8 +40,12 @@ import {
   BarChart3,
   Trash2,
   AlertCircle,
+  Loader2,
+  CheckCircle,
+  TrendingUp,
 } from "lucide-react";
 import Link from "next/link";
+import { createClient } from "@/lib/supabase/client";
 
 interface CoursePageProps {
   params: Promise<{ id: string }>;
@@ -59,8 +63,12 @@ export default function CoursePage({ params }: CoursePageProps) {
   const [showSuccessBanner, setShowSuccessBanner] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [activityToDelete, setActivityToDelete] = useState<string | null>(null);
+  const [curriculum, setCurriculum] = useState<any>(null);
+  const [curriculumStatus, setCurriculumStatus] = useState<string>("");
+  const [curriculumProgress, setCurriculumProgress] = useState<number>(0);
 
   const router = useRouter();
+  const supabase = createClient();
 
   useEffect(() => {
     const initializeParams = async () => {
@@ -115,12 +123,57 @@ export default function CoursePage({ params }: CoursePageProps) {
         );
         setEnrolledStudents([]);
       }
+
+      // Load curriculum data directly from Supabase
+      const { data: curriculumData, error: curriculumError } = await supabase
+        .from("curriculum_documents")
+        .select("id, title, processing_status, processing_progress, processing_error")
+        .eq("course_id", id)
+        .order("uploaded_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (curriculumError && curriculumError.code !== "PGRST116") {
+        console.error("Error loading curriculum:", curriculumError);
+      } else if (curriculumData) {
+        setCurriculum(curriculumData);
+        setCurriculumStatus(curriculumData.processing_status || "");
+        setCurriculumProgress(curriculumData.processing_progress || 0);
+      }
     } catch (error) {
       setError("Failed to load course data");
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Poll curriculum status if processing - MUST be before any conditional returns
+  useEffect(() => {
+    if (!curriculum?.id || !curriculumStatus) return;
+    
+    if (curriculumStatus !== "completed" && curriculumStatus !== "failed") {
+      const interval = setInterval(async () => {
+        try {
+          const response = await fetch(`/api/curriculum/process-jobs?curriculum_id=${curriculum.id}`);
+          if (response.ok) {
+            const data = await response.json();
+            if (data.curriculum) {
+              setCurriculumStatus(data.curriculum.processing_status || "");
+              setCurriculumProgress(data.curriculum.processing_progress || 0);
+              
+              if (data.curriculum.processing_status === "completed") {
+                clearInterval(interval);
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error checking curriculum status:", error);
+        }
+      }, 5000); // Check every 5 seconds
+      
+      return () => clearInterval(interval);
+    }
+  }, [curriculum?.id, curriculumStatus]);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -212,157 +265,166 @@ export default function CoursePage({ params }: CoursePageProps) {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8">
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-7xl mx-auto px-6 py-6">
         {/* Success Banner */}
         {showSuccessBanner && (
-          <Card className="mb-6 border-green-500 bg-green-50 dark:bg-green-950">
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="h-10 w-10 rounded-full bg-green-500 flex items-center justify-center">
-                    <Plus className="h-5 w-5 text-white" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-green-900 dark:text-green-100">
-                      Course created successfully! 🎉
-                    </h3>
-                    <p className="text-sm text-green-700 dark:text-green-300">
-                      Now create your first activity to get started.
-                    </p>
-                  </div>
+          <div className="mb-6 rounded-lg border border-green-200 bg-green-50 p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="h-8 w-8 rounded-full bg-green-500 flex items-center justify-center flex-shrink-0">
+                  <CheckCircle className="h-4 w-4 text-white" />
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowSuccessBanner(false)}
-                >
-                  ✕
-                </Button>
+                <div>
+                  <h3 className="text-sm font-semibold text-green-900">
+                    Course created successfully!
+                  </h3>
+                  <p className="text-xs text-green-700 mt-0.5">
+                    Now create your first activity to get started.
+                  </p>
+                </div>
               </div>
-            </CardContent>
-          </Card>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 w-6 p-0 text-green-700 hover:text-green-900"
+                onClick={() => setShowSuccessBanner(false)}
+              >
+                <span className="text-sm">×</span>
+              </Button>
+            </div>
+          </div>
         )}
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" asChild>
+        <div className="mb-6">
+          <div className="flex items-center gap-3 mb-4">
+            <Button variant="ghost" size="sm" className="h-8 px-3" asChild>
               <Link href="/dashboard/courses">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Back to Courses
+                <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
+                <span className="text-sm">Back</span>
               </Link>
             </Button>
-            <div>
-              <h1 className="text-3xl font-bold">{course.title}</h1>
-            </div>
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" asChild>
-              <Link href={`/dashboard/courses/${courseId}/curriculum`}>
-                <BarChart3 className="h-4 w-4 mr-2" />
-                Improve Curriculum
-              </Link>
-            </Button>
-            <Button variant="outline" asChild>
-              <Link href={`/dashboard/courses/${courseId}/edit`}>
-                <Edit className="h-4 w-4 mr-2" />
-                Edit Course
-              </Link>
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={() => setShowDeleteDialog(true)}
-              disabled={isDeleting}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete Course
-            </Button>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <h1 className="text-2xl font-bold text-gray-900 mb-1.5">{course.title}</h1>
+              <p className="text-sm text-gray-600">{course.description || "Course management and activities"}</p>
+            </div>
+            <div className="flex gap-2 flex-shrink-0">
+              <Button variant="outline" size="sm" className="h-9 px-4" asChild>
+                <Link href={`/dashboard/courses/${courseId}/edit`}>
+                  <Edit className="h-3.5 w-3.5 mr-1.5" />
+                  <span className="text-sm">Edit</span>
+                </Link>
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-9 px-4 text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+                onClick={() => setShowDeleteDialog(true)}
+                disabled={isDeleting}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" />
+                <span className="text-sm">Delete</span>
+              </Button>
+            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           {/* Main Content */}
-          <div className="lg:col-span-2">
-            <Tabs defaultValue="activities" className="space-y-6">
-              <TabsList>
-                <TabsTrigger value="activities">Activities</TabsTrigger>
-                <TabsTrigger value="students">Students</TabsTrigger>
-                <TabsTrigger value="analytics">Analytics</TabsTrigger>
-              </TabsList>
+          <div className="lg:col-span-8">
+            <Tabs defaultValue="activities" className="w-full">
+              <div className="border-b border-gray-200 mb-6">
+                <TabsList className="bg-transparent h-auto p-0">
+                  <TabsTrigger 
+                    value="activities" 
+                    className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-gray-900 data-[state=active]:text-gray-900 rounded-none px-4 py-2.5 text-sm font-medium text-gray-600"
+                  >
+                    Activities
+                  </TabsTrigger>
+                  <TabsTrigger 
+                    value="students"
+                    className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-gray-900 data-[state=active]:text-gray-900 rounded-none px-4 py-2.5 text-sm font-medium text-gray-600"
+                  >
+                    Students
+                  </TabsTrigger>
+                </TabsList>
+              </div>
 
-              <TabsContent value="activities" className="space-y-6">
-                <div className="flex items-center justify-between">
+              <TabsContent value="activities" className="space-y-4 mt-0">
+                <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h2 className="text-xl font-semibold">Activities</h2>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Build your course with interactive activities
+                    <h2 className="text-lg font-semibold text-gray-900">Activities</h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {activities.length} {activities.length === 1 ? 'activity' : 'activities'}
                     </p>
                   </div>
-                  <Button asChild size="lg" className="shadow-md">
-                    <Link
-                      href={`/dashboard/courses/${courseId}/activities/new`}
-                    >
-                      <Plus className="h-4 w-4 mr-2" />
+                  <Button asChild size="sm" className="bg-gray-900 hover:bg-gray-800 text-white h-9">
+                    <Link href={`/dashboard/courses/${courseId}/activities/new`}>
+                      <Plus className="h-3.5 w-3.5 mr-1.5" />
                       Create Activity
                     </Link>
                   </Button>
                 </div>
 
-                <div className="space-y-4">
+                <div className="space-y-2">
                   {activities.length === 0 ? (
-                    <Card className="p-12 text-center border-2 border-dashed">
-                      <div className="max-w-md mx-auto">
-                        <div className="h-16 w-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                          <BookOpen className="h-8 w-8 text-primary" />
+                    <div className="rounded-lg border-2 border-dashed border-gray-200 bg-white p-12 text-center">
+                      <div className="max-w-sm mx-auto">
+                        <div className="h-14 w-14 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <BookOpen className="h-7 w-7 text-gray-400" />
                         </div>
-                        <h3 className="text-xl font-semibold mb-2">
-                          Start Building Your Course
+                        <h3 className="text-base font-semibold text-gray-900 mb-2">
+                          No activities yet
                         </h3>
-                        <p className="text-muted-foreground mb-6">
-                          Create your first activity to add quizzes, interactive
-                          content, and learning experiences. You can use AI to
-                          help generate engaging activities.
+                        <p className="text-sm text-gray-500 mb-6">
+                          Create your first activity to add quizzes, interactive content, and learning experiences.
                         </p>
-                        <Button asChild size="lg" className="shadow-md">
-                          <Link
-                            href={`/dashboard/courses/${courseId}/activities/new`}
-                          >
-                            <Plus className="h-4 w-4 mr-2" />
-                            Create Your First Activity
+                        <Button asChild size="sm" className="bg-gray-900 hover:bg-gray-800 text-white">
+                          <Link href={`/dashboard/courses/${courseId}/activities/new`}>
+                            <Plus className="h-3.5 w-3.5 mr-1.5" />
+                            Create Activity
                           </Link>
                         </Button>
                       </div>
-                    </Card>
+                    </div>
                   ) : (
                     activities.map((activity) => (
-                      <Card key={activity.id} className="p-4">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div className="p-2 bg-primary/10 rounded-lg">
-                              <BookOpen className="h-5 w-5 text-primary" />
+                      <div 
+                        key={activity.id} 
+                        className="rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300 hover:shadow-sm transition-all"
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                            <div className="h-10 w-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                              <BookOpen className="h-5 w-5 text-gray-600" />
                             </div>
-                            <div>
-                              <h3 className="font-semibold">
+                            <div className="flex-1 min-w-0">
+                              <h3 className="font-semibold text-sm text-gray-900 mb-1 truncate">
                                 {activity.title}
                               </h3>
+                              {activity.description && (
+                                <p className="text-xs text-gray-500 line-clamp-2">
+                                  {activity.description}
+                                </p>
+                              )}
                             </div>
                           </div>
-                          <div className="flex gap-2">
-                            <Button variant="outline" size="sm" asChild>
-                              <Link
-                                href={`/dashboard/courses/${courseId}/activities/new?id=${activity.id}`}
-                              >
-                                <Edit className="h-4 w-4 mr-1" />
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <Button variant="ghost" size="sm" className="h-8 px-3 text-xs" asChild>
+                              <Link href={`/dashboard/courses/${courseId}/activities/new?id=${activity.id}`}>
+                                <Edit className="h-3.5 w-3.5 mr-1.5" />
                                 Edit
                               </Link>
                             </Button>
                             <Button
-                              variant="outline"
+                              variant="ghost"
                               size="sm"
+                              className="h-8 px-3 text-xs"
                               onClick={async () => {
                                 try {
-                                  // Publish the activity (make it visible to students)
                                   const response = await fetch(`/api/activities/${activity.id}/publish`, {
                                     method: "POST",
                                   });
@@ -377,7 +439,6 @@ export default function CoursePage({ params }: CoursePageProps) {
                                     alert(
                                       `Activity published and link copied to clipboard!\n\n${shareUrl}\n\nStudents can now access this activity.`
                                     );
-                                    // Reload to show updated status
                                     window.location.reload();
                                   } else {
                                     const error = await response.json();
@@ -389,46 +450,43 @@ export default function CoursePage({ params }: CoursePageProps) {
                                 }
                               }}
                             >
-                              <Share2 className="h-4 w-4 mr-1" />
-                              {activity.is_published ? "Share & Get URL" : "Publish & Share"}
+                              <Share2 className="h-3.5 w-3.5 mr-1.5" />
+                              {activity.is_published ? "Share" : "Publish"}
                             </Button>
-                            <Button variant="outline" size="sm" asChild>
-                              <Link
-                                href={`/dashboard/courses/${courseId}/activities/${activity.id}/analytics`}
-                              >
-                                <BarChart3 className="h-4 w-4 mr-1" />
+                            <Button variant="ghost" size="sm" className="h-8 px-3 text-xs" asChild>
+                              <Link href={`/dashboard/courses/${courseId}/activities/${activity.id}/analytics`}>
+                                <BarChart3 className="h-3.5 w-3.5 mr-1.5" />
                                 Analytics
                               </Link>
                             </Button>
                             <Button
-                              variant="outline"
+                              variant="ghost"
                               size="sm"
+                              className="h-8 px-3 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
                               onClick={() => handleDeleteActivity(activity.id)}
-                              className="text-red-600 hover:text-red-700 hover:bg-red-50"
                             >
-                              <Trash2 className="h-4 w-4 mr-1" />
-                              Delete
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </div>
-                      </Card>
+                      </div>
                     ))
                   )}
                 </div>
               </TabsContent>
 
-              <TabsContent value="students" className="space-y-6">
-                <div className="flex items-center justify-between mb-6">
+              <TabsContent value="students" className="space-y-4 mt-0">
+                <div className="flex items-center justify-between mb-4">
                   <div>
-                    <h2 className="text-xl font-semibold">Enrolled Students</h2>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      {enrolledStudents.length} student
-                      {enrolledStudents.length !== 1 ? "s" : ""} enrolled
+                    <h2 className="text-lg font-semibold text-gray-900">Enrolled Students</h2>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      {enrolledStudents.length} {enrolledStudents.length === 1 ? 'student' : 'students'} enrolled
                     </p>
                   </div>
                   <Button
                     variant="outline"
                     size="sm"
+                    className="h-9 px-3"
                     onClick={() => {
                       if (courseId) {
                         fetchCourseData(courseId);
@@ -440,208 +498,242 @@ export default function CoursePage({ params }: CoursePageProps) {
                 </div>
 
                 {studentsError && (
-                  <Card className="border-yellow-500 bg-yellow-50 dark:bg-yellow-900/20">
-                    <CardContent className="p-4">
-                      <div className="flex items-start gap-3">
-                        <AlertCircle className="h-5 w-5 text-yellow-600 mt-0.5" />
-                        <div className="flex-1">
-                          <h4 className="font-semibold text-yellow-900 dark:text-yellow-200 mb-1">
-                            Unable to Load Students
-                          </h4>
-                          <p className="text-sm text-yellow-800 dark:text-yellow-300 mb-2">
-                            {studentsError}
+                  <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="h-4 w-4 text-yellow-600 mt-0.5 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <h4 className="font-semibold text-sm text-yellow-900 mb-1">
+                          Unable to Load Students
+                        </h4>
+                        <p className="text-xs text-yellow-800 mb-2">
+                          {studentsError}
+                        </p>
+                        {studentsError.includes("RLS") && (
+                          <p className="text-xs text-yellow-700">
+                            Please run the{" "}
+                            <code className="bg-yellow-100 px-1.5 py-0.5 rounded text-xs">
+                              fix_enrollments_rls_for_teachers.sql
+                            </code>{" "}
+                            script in your Supabase SQL Editor to fix this issue.
                           </p>
-                          {studentsError.includes("RLS") && (
-                            <p className="text-xs text-yellow-700 dark:text-yellow-400">
-                              Please run the{" "}
-                              <code className="bg-yellow-100 dark:bg-yellow-900 px-1 rounded">
-                                fix_enrollments_rls_for_teachers.sql
-                              </code>{" "}
-                              script in your Supabase SQL Editor to fix this
-                              issue.
-                            </p>
-                          )}
-                        </div>
+                        )}
                       </div>
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
                 )}
 
                 {!studentsError && enrolledStudents.length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="space-y-2">
                     {enrolledStudents.map((enrollment) => (
-                      <Card
+                      <div
                         key={enrollment.id}
-                        className="hover:shadow-md transition-shadow"
+                        className="rounded-lg border border-gray-200 bg-white p-4 hover:border-gray-300 hover:shadow-sm transition-all"
                       >
-                        <CardContent className="p-6">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-4 flex-1">
-                              <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                                <span className="text-primary font-semibold text-lg">
-                                  {enrollment.profiles?.full_name
-                                    ? enrollment.profiles.full_name
-                                        .split(" ")
-                                        .map((n: string) => n[0])
-                                        .join("")
-                                        .toUpperCase()
-                                        .slice(0, 2)
-                                    : enrollment.profiles?.email
-                                    ? enrollment.profiles.email[0].toUpperCase()
-                                    : "?"}
-                                </span>
-                              </div>
-                              <div className="flex-1">
-                                <h3 className="font-semibold text-lg">
-                                  {enrollment.profiles?.full_name ||
-                                    "Unknown Student"}
-                                </h3>
-                                <p className="text-sm text-muted-foreground">
-                                  {enrollment.profiles?.email || "No email"}
-                                </p>
-                                <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground">
-                                  <span className="flex items-center gap-1">
-                                    <Clock className="h-3 w-3" />
-                                    Enrolled{" "}
-                                    {new Date(
-                                      enrollment.enrolled_at
-                                    ).toLocaleDateString()}
-                                  </span>
-                                </div>
-                              </div>
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
+                            <span className="text-gray-700 font-semibold text-xs">
+                              {enrollment.profiles?.full_name
+                                ? enrollment.profiles.full_name
+                                    .split(" ")
+                                    .map((n: string) => n[0])
+                                    .join("")
+                                    .toUpperCase()
+                                    .slice(0, 2)
+                                : enrollment.profiles?.email
+                                ? enrollment.profiles.email[0].toUpperCase()
+                                : "?"}
+                            </span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-semibold text-sm text-gray-900 mb-0.5 truncate">
+                              {enrollment.profiles?.full_name || "Unknown Student"}
+                            </h3>
+                            <p className="text-xs text-gray-500 truncate">
+                              {enrollment.profiles?.email || "No email"}
+                            </p>
+                            <div className="flex items-center gap-2 mt-1.5">
+                              <span className="flex items-center gap-1 text-xs text-gray-500">
+                                <Clock className="h-3 w-3" />
+                                Enrolled {new Date(enrollment.enrolled_at).toLocaleDateString()}
+                              </span>
                             </div>
                           </div>
-                        </CardContent>
-                      </Card>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 ) : !studentsError ? (
-                  <Card>
-                    <CardContent className="p-8 text-center">
-                      <Users className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                      <h3 className="text-lg font-semibold mb-2">
+                  <div className="rounded-lg border border-gray-200 bg-white p-12 text-center">
+                    <div className="max-w-sm mx-auto">
+                      <div className="h-14 w-14 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <Users className="h-7 w-7 text-gray-400" />
+                      </div>
+                      <h3 className="text-base font-semibold text-gray-900 mb-2">
                         No students enrolled yet
                       </h3>
-                      <p className="text-muted-foreground">
-                        Share the join code with your students to get them
-                        enrolled.
+                      <p className="text-sm text-gray-500">
+                        Share the join code with your students to get them enrolled.
                       </p>
-                    </CardContent>
-                  </Card>
-                ) : null}
-              </TabsContent>
-
-              <TabsContent value="analytics" className="space-y-6">
-                <div className="text-center py-8">
-                  <div className="h-12 w-12 bg-primary/10 rounded-lg mx-auto mb-4 flex items-center justify-center">
-                    <span className="text-primary font-bold">📊</span>
+                    </div>
                   </div>
-                  <h3 className="text-lg font-semibold mb-2">Analytics</h3>
-                  <p className="text-muted-foreground">
-                    View course performance and engagement metrics
-                  </p>
-                </div>
+                ) : null}
               </TabsContent>
             </Tabs>
           </div>
 
           {/* Sidebar */}
-          <div className="space-y-6">
+          <div className="lg:col-span-4 space-y-4">
             {/* Course Info */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Course Information</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center gap-2 text-sm">
-                  <BookOpen className="h-4 w-4 text-muted-foreground" />
-                  <span>{course.subject}</span>
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <div className="border-b border-gray-200 px-4 py-3">
+                <h3 className="text-sm font-semibold text-gray-900">Course Information</h3>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                    <BookOpen className="h-4 w-4 text-gray-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Subject</p>
+                    <p className="text-sm font-medium text-gray-900">{course.subject}</p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                  <span>{course.grade_level}</span>
+                <div className="flex items-center gap-3">
+                  <div className="h-8 w-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
+                    <Users className="h-4 w-4 text-gray-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-gray-500">Grade Level</p>
+                    <p className="text-sm font-medium text-gray-900">{course.grade_level}</p>
+                  </div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
 
             {/* Course Join Code */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Course Join Code</CardTitle>
-                <CardDescription>
-                  Share this code with your students to join the course
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label>Join Code</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      value={course.join_code || "Not set"}
-                      readOnly
-                      className="text-lg font-mono font-bold text-center"
-                    />
-                    {course.join_code ? (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          copyToClipboard(course.join_code || "");
-                          // You could add a toast notification here
-                          alert(
-                            `Join code copied to clipboard!\n\n${course.join_code}`
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <div className="border-b border-gray-200 px-4 py-3">
+                <h3 className="text-sm font-semibold text-gray-900">Join Code</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Share with students</p>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="flex gap-2">
+                  <Input
+                    value={course.join_code || "Not set"}
+                    readOnly
+                    className="text-sm font-mono font-semibold text-center bg-gray-50 border-gray-200 h-9"
+                  />
+                  {course.join_code ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-9 px-3 flex-shrink-0"
+                      onClick={() => {
+                        copyToClipboard(course.join_code || "");
+                        alert(`Join code copied to clipboard!\n\n${course.join_code}`);
+                      }}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="default"
+                      size="sm"
+                      className="bg-gray-900 hover:bg-gray-800 text-white h-9 px-3 flex-shrink-0"
+                      onClick={async () => {
+                        try {
+                          const response = await fetch(
+                            `/api/courses/${courseId}/generate-join-code`,
+                            { method: "POST" }
                           );
-                        }}
-                      >
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="default"
-                        size="sm"
-                        onClick={async () => {
-                          try {
-                            const response = await fetch(
-                              `/api/courses/${courseId}/generate-join-code`,
-                              { method: "POST" }
-                            );
-                            const data = await response.json();
-                            if (response.ok && data.success) {
-                              setCourse({
-                                ...course,
-                                join_code: data.join_code,
-                              });
-                              alert(
-                                `Join code generated: ${data.join_code}\n\nThis code has been copied to your clipboard.`
-                              );
-                              copyToClipboard(data.join_code);
-                            } else {
-                              alert(
-                                `Failed to generate join code: ${
-                                  data.error || "Unknown error"
-                                }`
-                              );
-                            }
-                          } catch (error) {
-                            alert(
-                              "Failed to generate join code. Please try again."
-                            );
+                          const data = await response.json();
+                          if (response.ok && data.success) {
+                            setCourse({ ...course, join_code: data.join_code });
+                            alert(`Join code generated: ${data.join_code}\n\nThis code has been copied to your clipboard.`);
+                            copyToClipboard(data.join_code);
+                          } else {
+                            alert(`Failed to generate join code: ${data.error || "Unknown error"}`);
                           }
-                        }}
-                      >
-                        Generate Code
-                      </Button>
-                    )}
-                  </div>
-                  {!course.join_code && (
-                    <p className="text-xs text-muted-foreground">
-                      This course doesn't have a join code yet. Click "Generate
-                      Code" to create one.
-                    </p>
+                        } catch (error) {
+                          alert("Failed to generate join code. Please try again.");
+                        }
+                      }}
+                    >
+                      Generate
+                    </Button>
                   )}
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
+
+            {/* Improve Curriculum */}
+            <div className="rounded-lg border border-gray-200 bg-white">
+              <div className="border-b border-gray-200 px-4 py-3">
+                <h3 className="text-sm font-semibold text-gray-900">Improve Curriculum</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Upload and analyze</p>
+              </div>
+              <div className="p-4 space-y-3">
+                {curriculum ? (
+                  <div className="space-y-3">
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-medium text-gray-900 truncate pr-2">{curriculum.title}</p>
+                        {curriculumStatus === "pending" && (
+                          <Badge variant="outline" className="flex items-center gap-1 bg-blue-50 text-blue-700 border-blue-200 text-xs flex-shrink-0">
+                            <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                            Queued
+                          </Badge>
+                        )}
+                        {curriculumStatus && curriculumStatus !== "completed" && curriculumStatus !== "failed" && curriculumStatus !== "pending" && (
+                          <Badge variant="outline" className="flex items-center gap-1 bg-yellow-50 text-yellow-700 border-yellow-200 text-xs flex-shrink-0">
+                            <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                            Processing
+                          </Badge>
+                        )}
+                        {curriculumStatus === "completed" && (
+                          <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 text-xs flex-shrink-0">
+                            <CheckCircle className="h-2.5 w-2.5 mr-1" />
+                            Ready
+                          </Badge>
+                        )}
+                        {curriculumStatus === "failed" && (
+                          <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-xs flex-shrink-0">
+                            <AlertCircle className="h-2.5 w-2.5 mr-1" />
+                            Failed
+                          </Badge>
+                        )}
+                      </div>
+                      {curriculumStatus && curriculumStatus !== "completed" && curriculumStatus !== "failed" && (
+                        <div className="mt-2">
+                          <Progress value={curriculumProgress} className="h-1.5" />
+                          <p className="text-xs text-gray-500 mt-1">
+                            {curriculumProgress}% complete
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                    <Button variant="outline" className="w-full text-sm h-9" asChild>
+                      <Link href={`/dashboard/courses/${courseId}/curriculum`}>
+                        <TrendingUp className="h-3.5 w-3.5 mr-2" />
+                        View Curriculum
+                      </Link>
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <p className="text-xs text-gray-500">
+                      Upload curriculum to analyze performance.
+                    </p>
+                    <Button variant="outline" className="w-full text-sm h-9" asChild>
+                      <Link href={`/dashboard/courses/${courseId}/curriculum`}>
+                        <TrendingUp className="h-3.5 w-3.5 mr-2" />
+                        Upload Curriculum
+                      </Link>
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </div>

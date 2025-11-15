@@ -84,6 +84,7 @@ function initializeAI() {
   try {
     // Initialize with service account credentials - same pattern as Document AI and GCS
     // @google/genai supports Vertex AI mode with service account credentials
+    // Explicitly set scopes for Generative Language API access
     ai = new GoogleGenAI({
       project: process.env.GOOGLE_PROJECT_ID,
       location: process.env.GOOGLE_CLOUD_LOCATION || "us-central1",
@@ -92,6 +93,10 @@ function initializeAI() {
           client_email: process.env.GOOGLE_CLIENT_EMAIL,
           private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
         },
+        scopes: [
+          'https://www.googleapis.com/auth/generative-language',
+          'https://www.googleapis.com/auth/cloud-platform',
+        ],
       },
     });
     console.log("✅ [AI] Google GenAI initialized with service account credentials");

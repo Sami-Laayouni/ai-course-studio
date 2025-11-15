@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ai, getModelName, getDefaultConfig, requireAIConfiguration } from "@/lib/ai-config";
+import {
+  getAI,
+  getModelName,
+  getDefaultConfig,
+  requireAIConfiguration,
+} from "@/lib/ai-config";
 
 /**
  * Earl - The Intelligent Activity Analyzer
@@ -7,7 +12,7 @@ import { ai, getModelName, getDefaultConfig, requireAIConfiguration } from "@/li
  */
 export async function POST(request: NextRequest) {
   console.log("🔔 Earl: Starting question generation...");
-  
+
   try {
     try {
       requireAIConfiguration();
@@ -18,7 +23,8 @@ export async function POST(request: NextRequest) {
         {
           question: "What would you like to learn from this activity?",
           success: false,
-          error: "AI not configured. Please set GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, and GOOGLE_PRIVATE_KEY in your .env.local file",
+          error:
+            "AI not configured. Please set GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, and GOOGLE_PRIVATE_KEY in your .env.local file",
         },
         { status: 500 }
       );
@@ -39,6 +45,7 @@ export async function POST(request: NextRequest) {
       youtubeTranscripts = [],
       pdfTexts = [],
       contextSources = [],
+      nodeContext = "",
     } = body;
 
     // Collect all context text
@@ -56,12 +63,18 @@ export async function POST(request: NextRequest) {
 
     // Add YouTube transcripts
     if (youtubeTranscripts.length > 0) {
-      console.log(`🎥 Earl: Processing ${youtubeTranscripts.length} YouTube transcript(s)`);
+      console.log(
+        `🎥 Earl: Processing ${youtubeTranscripts.length} YouTube transcript(s)`
+      );
       allContext += "YouTube Video Transcripts:\n";
       youtubeTranscripts.forEach((transcript: string, index: number) => {
         const transcriptPreview = transcript.substring(0, 2000);
         allContext += `\nVideo ${index + 1}:\n${transcriptPreview}\n`;
-        console.log(`📹 Earl: Added YouTube transcript ${index + 1} (${transcript.length} chars, using first 2000)`);
+        console.log(
+          `📹 Earl: Added YouTube transcript ${index + 1} (${
+            transcript.length
+          } chars, using first 2000)`
+        );
       });
       allContext += "\n";
     }
@@ -73,14 +86,20 @@ export async function POST(request: NextRequest) {
       pdfTexts.forEach((text: string, index: number) => {
         const textPreview = text.substring(0, 2000);
         allContext += `\nDocument ${index + 1}:\n${textPreview}\n`;
-        console.log(`📄 Earl: Added PDF text ${index + 1} (${text.length} chars, using first 2000)`);
+        console.log(
+          `📄 Earl: Added PDF text ${index + 1} (${
+            text.length
+          } chars, using first 2000)`
+        );
       });
       allContext += "\n";
     }
 
     // Add context sources summaries
     if (contextSources.length > 0) {
-      console.log(`🔗 Earl: Processing ${contextSources.length} context source(s)`);
+      console.log(
+        `🔗 Earl: Processing ${contextSources.length} context source(s)`
+      );
       allContext += "Additional Context:\n";
       contextSources.forEach((source: any) => {
         if (source.summary) {
@@ -93,6 +112,16 @@ export async function POST(request: NextRequest) {
           allContext += `  Key Concepts: ${source.key_concepts.join(", ")}\n`;
         }
       });
+      allContext += "\n";
+    }
+
+    // Add node context (from activity nodes like review nodes)
+    if (nodeContext && nodeContext.trim().length > 0) {
+      console.log(
+        `📋 Earl: Processing node context (${nodeContext.length} chars)`
+      );
+      allContext += "Activity Content:\n";
+      allContext += nodeContext;
       allContext += "\n";
     }
 
@@ -139,49 +168,22 @@ Return ONLY the question itself, nothing else. Make it short, punchy, and curios
         maxOutputTokens: 150,
       };
 
-      // Retry logic for rate limits
-      let text = "";
-      let retries = 0;
-      const maxRetries = 3;
-      
-      while (retries <= maxRetries) {
-        try {
-          const response = await ai.models.generateContentStream({
-            model: getModelName(),
-            config,
-            contents: [
-              {
-                role: "user",
-                text: prompt,
-              },
-            ],
-          });
+      const ai = getAI();
+      const response = await ai.models.generateContentStream({
+        model: getModelName(),
+        config,
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: prompt }],
+          },
+        ],
+      });
 
-          for await (const chunk of response) {
-            if (chunk.text) {
-              text += chunk.text;
-            }
-          }
-          break; // Success, exit retry loop
-        } catch (rateLimitError: any) {
-          // Check if it's a rate limit error (429)
-          if (rateLimitError?.status === 429 || rateLimitError?.code === 429) {
-            if (retries < maxRetries) {
-              const retryDelay = Math.min(1000 * Math.pow(2, retries), 10000); // Exponential backoff, max 10s
-              console.log(`⏳ Earl: Rate limit hit, retrying in ${retryDelay}ms (attempt ${retries + 1}/${maxRetries})`);
-              await new Promise(resolve => setTimeout(resolve, retryDelay));
-              retries++;
-              continue;
-            } else {
-              // Max retries reached, return default question
-              console.log("⚠️ Earl: Rate limit exceeded, returning default question");
-              return NextResponse.json({
-                question: "What would you like to learn from this activity?",
-                success: true,
-              });
-            }
-          }
-          throw rateLimitError; // Not a rate limit error, rethrow
+      let text = "";
+      for await (const chunk of response) {
+        if (chunk.text) {
+          text += chunk.text;
         }
       }
 
@@ -204,7 +206,8 @@ Return ONLY the question itself, nothing else. Make it short, punchy, and curios
         console.log("🧹 Earl: Removed 'Question:' prefix");
       }
 
-      const finalQuestion = question || "What would you like to learn from this activity?";
+      const finalQuestion =
+        question || "What would you like to learn from this activity?";
       console.log(`✨ Earl: Final question: "${finalQuestion}"`);
 
       return NextResponse.json({
@@ -220,7 +223,7 @@ Return ONLY the question itself, nothing else. Make it short, punchy, and curios
           success: true,
         });
       }
-      
+
       console.error("❌ Earl: AI generation error:", aiError);
       console.error("❌ Earl: Error details:", {
         message: aiError?.message,
@@ -238,7 +241,7 @@ Return ONLY the question itself, nothing else. Make it short, punchy, and curios
         success: true,
       });
     }
-    
+
     console.error("❌ Earl: Question generation error:", error);
     console.error("❌ Earl: Error details:", {
       message: error?.message,
@@ -246,7 +249,7 @@ Return ONLY the question itself, nothing else. Make it short, punchy, and curios
       stack: error?.stack,
       name: error?.name,
     });
-    
+
     // Return default question instead of error for better UX
     return NextResponse.json({
       question: "What would you like to learn from this activity?",
@@ -254,4 +257,3 @@ Return ONLY the question itself, nothing else. Make it short, punchy, and curios
     });
   }
 }
-

@@ -52,9 +52,11 @@ import {
   Sparkles,
   PlusCircle,
   RefreshCcw,
+  Maximize2,
 } from "lucide-react";
 import ContextSelector from "./context-selector";
 import AgenticActivityPlayer from "./agentic-activity-player";
+import { TextEditorModal } from "@/components/ui/text-editor-modal";
 
 // Quiz Questions Component
 const QuizQuestionsEditor = ({
@@ -487,6 +489,10 @@ export default function SimpleZapierBuilder({
     setFlashcardGenerationError(null);
     setFlashcardGenerationErrorNodeId(null);
   }, [selectedNode?.id]);
+
+  // Modal states for text editing
+  const [contextModalOpen, setContextModalOpen] = useState(false);
+  const [promptsModalOpen, setPromptsModalOpen] = useState(false);
 
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [canvasSize, setCanvasSize] = useState({ width: 2000, height: 1500 });
@@ -3192,19 +3198,25 @@ export default function SimpleZapierBuilder({
                     <Label className="text-sm font-medium text-gray-700">
                       Context Configuration
                     </Label>
-                    <Textarea
-                      value={selectedNode.config.context || ""}
-                      onChange={(e) =>
-                        updateNodeConfig(selectedNode.id, {
-                          context: e.target.value,
-                        })
-                      }
-                      placeholder="Configure context based on uploaded documents and YouTube videos. The AI will use this to generate relevant terms for flashcards."
-                      rows={4}
-                      className="mt-1"
-                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full mt-1 justify-start"
+                      onClick={() => setContextModalOpen(true)}
+                    >
+                      <Maximize2 className="h-4 w-4 mr-2" />
+                      {selectedNode.config.context
+                        ? `Edit Context (${selectedNode.config.context.length} chars)`
+                        : "Edit Context"}
+                    </Button>
+                    {selectedNode.config.context && (
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                        {selectedNode.config.context.substring(0, 100)}
+                        {selectedNode.config.context.length > 100 ? "..." : ""}
+                      </p>
+                    )}
                     <p className="text-xs text-gray-500 mt-1">
-                      Describe the context or let the AI analyze uploaded documents/videos automatically.
+                      Describe the context or let the AI analyze uploaded documents/videos automatically. Supports math notation (x^2, H2O, sqrt(x)).
                     </p>
                   </div>
                   <div>
@@ -3315,40 +3327,73 @@ export default function SimpleZapierBuilder({
                     <Label className="text-sm font-medium text-gray-700">
                       Context Configuration
                     </Label>
-                    <Textarea
-                      value={selectedNode.config.context || ""}
-                      onChange={(e) =>
-                        updateNodeConfig(selectedNode.id, {
-                          context: e.target.value,
-                        })
-                      }
-                      placeholder="Configure context based on uploaded documents and YouTube videos."
-                      rows={4}
-                      className="mt-1"
-                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full mt-1 justify-start"
+                      onClick={() => setContextModalOpen(true)}
+                    >
+                      <Maximize2 className="h-4 w-4 mr-2" />
+                      {selectedNode.config.context
+                        ? `Edit Context (${selectedNode.config.context.length} chars)`
+                        : "Edit Context"}
+                    </Button>
+                    {selectedNode.config.context && (
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                        {selectedNode.config.context.substring(0, 100)}
+                        {selectedNode.config.context.length > 100 ? "..." : ""}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      Supports math notation (x^2, H2O, sqrt(x)).
+                    </p>
                   </div>
                   <div>
                     <Label className="text-sm font-medium text-gray-700">
                       Review Prompts
                     </Label>
-                    <Textarea
-                      value={selectedNode.config.prompts || ""}
-                      onChange={(e) =>
-                        updateNodeConfig(selectedNode.id, {
-                          prompts: e.target.value,
-                        })
-                      }
-                      placeholder="Enter review prompts (one per line). Example: 'Use a semicolon in a sentence'"
-                      rows={6}
-                      className="mt-1"
-                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full mt-1 justify-start"
+                      onClick={() => setPromptsModalOpen(true)}
+                    >
+                      <Maximize2 className="h-4 w-4 mr-2" />
+                      {selectedNode.config.prompts
+                        ? `Edit Prompts (${selectedNode.config.prompts.split('\n').length} prompts)`
+                        : "Edit Prompts"}
+                    </Button>
+                    {selectedNode.config.prompts && (
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                        {selectedNode.config.prompts.split('\n')[0]}
+                        {selectedNode.config.prompts.split('\n').length > 1 ? ` (+${selectedNode.config.prompts.split('\n').length - 1} more)` : ""}
+                      </p>
+                    )}
                     <p className="text-xs text-gray-500 mt-1">
-                      Enter one prompt per line. Students will complete each prompt.
+                      Enter one prompt per line. Students will complete each prompt. Supports math notation.
                     </p>
                   </div>
                 </div>
               )}
 
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Custom Instructions
+                </Label>
+                <Input
+                  value={selectedNode.config.instructions || "Write on your notebook and then here"}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      instructions: e.target.value,
+                    })
+                  }
+                  placeholder="Write on your notebook and then here"
+                  className="mt-1"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Default: "Write on your notebook and then here". You can customize this instruction (e.g., "Write on your notebook and write here. Be sure to show all your steps").
+                </p>
+              </div>
               <div>
                 <Label className="text-sm font-medium text-gray-700">
                   Points for Completion
@@ -3529,7 +3574,7 @@ export default function SimpleZapierBuilder({
 
       <div className="flex flex-1">
         {/* Zapier-style Sidebar */}
-        <div className="w-72 border-r bg-white">
+        <div className="w-96 border-r bg-white">
           <Tabs
             value={activeTab}
             onValueChange={(value) =>
@@ -4176,6 +4221,34 @@ export default function SimpleZapierBuilder({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Text Editor Modals */}
+      {selectedNode && (
+        <>
+          <TextEditorModal
+            open={contextModalOpen}
+            onOpenChange={setContextModalOpen}
+            value={selectedNode.config.context || ""}
+            onChange={(value) =>
+              updateNodeConfig(selectedNode.id, { context: value })
+            }
+            title="Edit Context Configuration"
+            description="Configure context for flashcards or teacher review. Supports math notation (x^2, H2O, sqrt(x))."
+            placeholder="Configure context based on uploaded documents and YouTube videos..."
+          />
+          <TextEditorModal
+            open={promptsModalOpen}
+            onOpenChange={setPromptsModalOpen}
+            value={selectedNode.config.prompts || ""}
+            onChange={(value) =>
+              updateNodeConfig(selectedNode.id, { prompts: value })
+            }
+            title="Edit Review Prompts"
+            description="Enter one prompt per line. Students will complete each prompt. Supports math notation."
+            placeholder="Enter review prompts (one per line). Example: 'Use a semicolon in a sentence'"
+          />
+        </>
       )}
     </div>
   );

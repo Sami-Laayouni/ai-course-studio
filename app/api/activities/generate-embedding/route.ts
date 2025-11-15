@@ -171,18 +171,40 @@ export async function POST(request: NextRequest) {
     // Generate embedding
     const embedding = await generateEmbedding(combinedText);
 
-    // Store embedding
-    const { error: insertError } = await supabase
-      .from("activity_embeddings")
-      .upsert({
-        activity_id,
-        activity_title: activity.title || "",
-        activity_description: activity.description || "",
-        activity_content: combinedText,
-        embedding: `[${embedding.join(',')}]`, // Convert to PostgreSQL array format
-      }, {
-        onConflict: "activity_id"
+    // Store embedding - pgvector expects the vector as a string in format '[1,2,3,...]'
+    // Ensure all values are properly formatted as numbers
+    const embeddingString = `[${embedding.map(v => {
+      const num = typeof v === 'number' ? v : parseFloat(v);
+      return isNaN(num) ? 0 : num;
+    }).join(',')}]`;
+
+    // Store embedding using RPC call to ensure proper vector format
+    let insertError;
+    try {
+      const { error: rpcError } = await supabase.rpc('upsert_activity_embedding', {
+        p_activity_id: activity_id,
+        p_activity_title: activity.title || "",
+        p_activity_description: activity.description || "",
+        p_activity_content: combinedText,
+        p_embedding: embeddingString,
       });
+      insertError = rpcError;
+    } catch (rpcError: any) {
+      // Fallback to direct insert if RPC doesn't exist
+      console.warn("RPC function not found, using direct insert:", rpcError);
+      const { error: directError } = await supabase
+        .from("activity_embeddings")
+        .upsert({
+          activity_id,
+          activity_title: activity.title || "",
+          activity_description: activity.description || "",
+          activity_content: combinedText,
+          embedding: embeddingString,
+        }, {
+          onConflict: "activity_id"
+        });
+      insertError = directError;
+    }
 
     if (insertError) {
       console.error("Error storing activity embedding:", insertError);

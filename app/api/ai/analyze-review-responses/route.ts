@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { generateContent, createCacheKey } from "@/lib/genai-utils";
 import { checkRateLimit } from "@/lib/rate-limiter";
@@ -84,8 +85,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Use service client to bypass RLS for server-side inserts
-    const supabase = createServiceClient();
+    // Use server client like in courses route
+    const supabase = await createClient();
 
     // Check rate limits first
     const rateLimitCheck = checkRateLimit(student_id, "analyze-review-responses");
@@ -340,46 +341,56 @@ Return JSON:
     console.log(`💾 Saving ${misconceptionsArray.length} misconceptions to database...`);
 
     if (misconceptionsArray.length > 0) {
+      // Use service client for inserts to bypass RLS
+      const serviceSupabase = createServiceClient();
       const insertPromises = misconceptionsArray.map(async (misconception) => {
-        const insertData = {
-          student_id,
-          activity_id,
-          node_id: node_id || "",
-          concept: misconception.concept || "Unknown Concept",
-          misconception_description: misconception.misconception || misconception.misconception_description || "",
-          evidence: {
-            response: misconception.evidence || misconception.evidence?.response || "",
-            correct_understanding: misconception.correct_understanding || "",
-          },
-          severity: (misconception.severity || "medium").toLowerCase(),
-          ai_analysis: analysis,
-        };
+        try {
+          const insertData = {
+            student_id,
+            activity_id,
+            node_id: node_id || "",
+            concept: misconception.concept || "Unknown Concept",
+            misconception_description: misconception.misconception || misconception.misconception_description || "",
+            evidence: {
+              response: misconception.evidence || misconception.evidence?.response || "",
+              correct_understanding: misconception.correct_understanding || "",
+            },
+            severity: (misconception.severity || "medium").toLowerCase(),
+            ai_analysis: analysis,
+          };
 
-        // Try the insert
-        const { data, error } = await supabase
-          .from("student_misconceptions")
-          .insert(insertData)
-          .select();
+          // Try the insert
+          const { data, error } = await serviceSupabase
+            .from("student_misconceptions")
+            .insert(insertData)
+            .select();
 
-        if (error) {
-          console.error(`❌ Error inserting misconception for concept "${misconception.concept}":`, error);
-          console.error("   Error code:", error.code);
-          console.error("   Error message:", error.message);
-          console.error("   Error hint:", error.hint);
-          console.error("   Error details:", JSON.stringify(error, null, 2));
-          console.error("   Insert data:", JSON.stringify(insertData, null, 2));
-          
-          // Log the actual error - don't assume it's an API key error
-          throw error;
+          if (error) {
+            console.error(`❌ Error inserting misconception for concept "${misconception.concept}":`, error);
+            console.error("   Error code:", error.code);
+            console.error("   Error message:", error.message);
+            console.error("   Error hint:", error.hint);
+            console.error("   Error details:", JSON.stringify(error, null, 2));
+            
+            // If it's an API key error, provide helpful message
+            if (error.message?.includes("Invalid API key") || error.message?.includes("JWT")) {
+              throw new Error(`Invalid API key: ${error.message}. Please check SUPABASE_SERVICE_ROLE_KEY in .env.local`);
+            }
+            
+            throw error;
+          }
+
+          console.log(`✅ Saved misconception: ${misconception.concept}`, data?.[0]?.id);
+          return { success: true, data };
+        } catch (err: any) {
+          console.error(`❌ Failed to save misconception "${misconception.concept}":`, err);
+          return { success: false, error: err };
         }
-
-        console.log(`✅ Saved misconception: ${misconception.concept}`, data?.[0]?.id);
-        return data;
       });
 
-      const results = await Promise.allSettled(insertPromises);
-      const successful = results.filter(r => r.status === 'fulfilled').length;
-      const failed = results.filter(r => r.status === 'rejected').length;
+      const results = await Promise.all(insertPromises);
+      const successful = results.filter(r => r.success).length;
+      const failed = results.filter(r => !r.success).length;
       
       if (successful > 0) {
         console.log(`✅ Successfully saved ${successful} out of ${misconceptionsArray.length} misconceptions`);
@@ -387,8 +398,8 @@ Return JSON:
       if (failed > 0) {
         console.error(`❌ Failed to save ${failed} misconceptions`);
         results.forEach((result, idx) => {
-          if (result.status === 'rejected') {
-            const error = result.reason;
+          if (!result.success) {
+            const error = result.error;
             console.error(`   Failed misconception ${idx + 1} (${misconceptionsArray[idx]?.concept || 'unknown'}):`, error?.message || error);
           }
         });
@@ -404,27 +415,39 @@ Return JSON:
 
     if (understoodConcepts.length > 0) {
       console.log(`💾 Updating concept mastery for ${understoodConcepts.length} concepts...`);
+      // Use service client for inserts to bypass RLS
+      const serviceSupabase = createServiceClient();
       const masteryPromises = understoodConcepts.map(async (concept) => {
-        const { error } = await supabase
-          .from("concept_mastery")
-          .upsert(
-            {
-              student_id,
-              activity_id,
-              concept: typeof concept === "string" ? concept : String(concept),
-              mastery_level: 0.8, // High mastery for understood concepts
-              evidence_count: 1,
-              last_updated: new Date().toISOString(),
-            },
-            { onConflict: "student_id,activity_id,concept" }
-          );
+        try {
+          const { error } = await serviceSupabase
+            .from("concept_mastery")
+            .upsert(
+              {
+                student_id,
+                activity_id,
+                concept: typeof concept === "string" ? concept : String(concept),
+                mastery_level: 0.8, // High mastery for understood concepts
+                evidence_count: 1,
+                last_updated: new Date().toISOString(),
+              },
+              { onConflict: "student_id,activity_id,concept" }
+            );
 
-        if (error) {
-          console.error(`❌ Error updating concept mastery for "${concept}":`, error);
+          if (error) {
+            console.error(`❌ Error updating concept mastery for "${concept}":`, error);
+            // If it's an API key error, provide helpful message
+            if (error.message?.includes("Invalid API key") || error.message?.includes("JWT")) {
+              console.error(`   This is an API key error. Please check SUPABASE_SERVICE_ROLE_KEY in .env.local`);
+            }
+            throw error;
+          }
+          console.log(`✅ Updated concept mastery for "${concept}"`);
+        } catch (err: any) {
+          console.error(`❌ Failed to update concept mastery for "${concept}":`, err?.message || err);
         }
       });
 
-      await Promise.all(masteryPromises);
+      await Promise.allSettled(masteryPromises);
     }
 
     // Update real-time analytics
@@ -479,15 +502,27 @@ Return JSON:
       },
     };
 
-    const { data: analyticsResult, error: analyticsError } = await supabase
-      .from("real_time_analytics")
-      .insert(analyticsData)
-      .select();
+    try {
+      // Use service client for inserts to bypass RLS
+      const serviceSupabase = createServiceClient();
+      const { data: analyticsResult, error: analyticsError } = await serviceSupabase
+        .from("real_time_analytics")
+        .insert(analyticsData)
+        .select();
 
-    if (analyticsError) {
-      console.error("❌ Error inserting real-time analytics:", analyticsError);
-    } else {
-      console.log("✅ Saved real-time analytics:", analyticsResult?.[0]?.id);
+      if (analyticsError) {
+        console.error("❌ Error inserting real-time analytics:", analyticsError);
+        // If it's an API key error, provide helpful message
+        if (analyticsError.message?.includes("Invalid API key") || analyticsError.message?.includes("JWT")) {
+          console.error("   This is an API key error. Please check SUPABASE_SERVICE_ROLE_KEY in .env.local");
+        }
+        throw analyticsError;
+      } else {
+        console.log("✅ Saved real-time analytics:", analyticsResult?.[0]?.id);
+      }
+    } catch (analyticsErr: any) {
+      console.error("❌ Failed to save real-time analytics:", analyticsErr?.message || analyticsErr);
+      // Don't fail the entire request if analytics fails
     }
 
     return NextResponse.json({

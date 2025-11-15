@@ -72,20 +72,44 @@ export async function POST(request: NextRequest) {
         // Generate embedding
         const embedding = await generateEmbedding(sectionText);
 
-        // Store embedding
-        const { error: insertError } = await supabase
-          .from("curriculum_section_embeddings")
-          .upsert({
-            curriculum_document_id,
-            section_id: section.id || `section_${processed}`,
-            section_title: section.title || "",
-            section_text: sectionText,
-            embedding: `[${embedding.join(',')}]`, // Convert to PostgreSQL array format
-            page_number: section.pageNumber || null,
-            concepts: section.concepts || [],
-          }, {
-            onConflict: "curriculum_document_id,section_id"
+        // Store embedding - pgvector expects the vector as a string in format '[1,2,3,...]'
+        // Ensure all values are properly formatted as numbers
+        const embeddingString = `[${embedding.map(v => {
+          const num = typeof v === 'number' ? v : parseFloat(v);
+          return isNaN(num) ? 0 : num;
+        }).join(',')}]`;
+
+        // Store embedding using RPC call to ensure proper vector format
+        let insertError;
+        try {
+          const { error: rpcError } = await supabase.rpc('upsert_curriculum_section_embedding', {
+            p_curriculum_document_id: curriculum_document_id,
+            p_section_id: section.id || `section_${processed}`,
+            p_section_title: section.title || "",
+            p_section_text: sectionText,
+            p_embedding: embeddingString,
+            p_page_number: section.pageNumber || null,
+            p_concepts: section.concepts || [],
           });
+          insertError = rpcError;
+        } catch (rpcError: any) {
+          // Fallback to direct insert if RPC doesn't exist
+          console.warn("RPC function not found, using direct insert:", rpcError);
+          const { error: directError } = await supabase
+            .from("curriculum_section_embeddings")
+            .upsert({
+              curriculum_document_id,
+              section_id: section.id || `section_${processed}`,
+              section_title: section.title || "",
+              section_text: sectionText,
+              embedding: embeddingString,
+              page_number: section.pageNumber || null,
+              concepts: section.concepts || [],
+            }, {
+              onConflict: "curriculum_document_id,section_id"
+            });
+          insertError = directError;
+        }
 
         if (insertError) {
           console.error(`Error storing embedding for section ${section.id}:`, insertError);

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,6 +18,98 @@ import {
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { AdvancedTextarea } from "@/components/ui/advanced-textarea";
+import katex from "katex";
+import "katex/dist/katex.min.css";
+
+// Helper function to render math in text
+function renderMathInText(text: string): string {
+  if (!text) return "";
+
+  // Check if text has math notation
+  const hasMath =
+    /[\^_+\-*/=<>≤≥≠≈∑∫√π∞αβγθλσΔρ]/.test(text) ||
+    /\b(sqrt|frac|sum|int|pi|inf|alpha|beta|gamma|theta|lambda|sigma|Delta|rho)\b/i.test(
+      text
+    ) ||
+    /[A-Z][a-z]*\d+/.test(text) ||
+    /\d+\/\d+/.test(text);
+
+  if (!hasMath) {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  // Convert simple notation to LaTeX
+  let result = text;
+
+  // Chemical formulas: H2O -> H_{2}O
+  result = result.replace(/([A-Z][a-z]*)(\d+)/g, (match, element, num) => {
+    return `${element}_{${num}}`;
+  });
+
+  // sqrt(x) -> \sqrt{x}
+  result = result.replace(/sqrt\(([^)]+)\)/g, (match, content) => {
+    return `\\sqrt{${content}}`;
+  });
+
+  // Powers: x^2 -> x^{2}
+  result = result.replace(/([a-zA-Z0-9\)]+)\^(\d+)/g, (match, base, exp) => {
+    return `${base}^{${exp}}`;
+  });
+
+  result = result.replace(
+    /([a-zA-Z0-9\)]+)\^([a-zA-Z]+)/g,
+    (match, base, exp) => {
+      return `${base}^{${exp}}`;
+    }
+  );
+
+  // Subscripts: x_2 -> x_{2}
+  result = result.replace(/([a-zA-Z]+)_(\d+)/g, (match, base, sub) => {
+    return `${base}_{${sub}}`;
+  });
+
+  result = result.replace(/([a-zA-Z]+)_([a-zA-Z]+)/g, (match, base, sub) => {
+    return `${base}_{${sub}}`;
+  });
+
+  // Fractions: a/b -> \frac{a}{b}
+  result = result.replace(
+    /\b([a-zA-Z0-9]+)\/([a-zA-Z0-9]+)\b/g,
+    (match, num, den) => {
+      return `\\frac{${num}}{${den}}`;
+    }
+  );
+
+  // Constants
+  result = result.replace(/\bpi\b/g, "\\pi");
+  result = result.replace(/\binf\b/g, "\\infty");
+  result = result.replace(/\bsum\b/g, "\\sum");
+  result = result.replace(/\bint\b/g, "\\int");
+  result = result.replace(/\balpha\b/g, "\\alpha");
+  result = result.replace(/\bbeta\b/g, "\\beta");
+  result = result.replace(/\bgamma\b/g, "\\gamma");
+  result = result.replace(/\btheta\b/g, "\\theta");
+  result = result.replace(/\blambda\b/g, "\\lambda");
+  result = result.replace(/\bsigma\b/g, "\\sigma");
+  result = result.replace(/\bDelta\b/g, "\\Delta");
+  result = result.replace(/\brho\b/g, "\\rho");
+
+  try {
+    const rendered = katex.renderToString(result, {
+      displayMode: false,
+      throwOnError: false,
+    });
+    return rendered;
+  } catch (error) {
+    return text
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+}
 
 export interface ReviewMisconceptionAnalysis {
   concept: string;
@@ -59,6 +151,7 @@ interface ReviewActivityProps {
     num_terms?: number;
     prompts?: string;
     points?: number;
+    instructions?: string;
     flashcard_terms?: Array<{ id?: string; term: string } | string>;
   };
   activityId: string;
@@ -83,7 +176,7 @@ export default function ReviewActivity({
   const initialFlashcardTerms: FlashcardTerm[] = Array.isArray(
     nodeConfig.flashcard_terms
   )
-    ? nodeConfig.flashcard_terms
+    ? (nodeConfig.flashcard_terms
         .map((item: any, index: number) => {
           if (typeof item === "string") {
             return {
@@ -101,14 +194,15 @@ export default function ReviewActivity({
           }
           return null;
         })
-        .filter(Boolean) as FlashcardTerm[]
+        .filter(Boolean) as FlashcardTerm[])
     : [];
 
-  const [reviewType, setReviewType] = useState<
-    "flashcards" | "teacher_review"
-  >(nodeConfig.review_type || "flashcards");
-  const [flashcardTerms, setFlashcardTerms] =
-    useState<FlashcardTerm[]>(initialFlashcardTerms);
+  const [reviewType, setReviewType] = useState<"flashcards" | "teacher_review">(
+    nodeConfig.review_type || "flashcards"
+  );
+  const [flashcardTerms, setFlashcardTerms] = useState<FlashcardTerm[]>(
+    initialFlashcardTerms
+  );
   const [currentTermIndex, setCurrentTermIndex] = useState(0);
   const [teacherPrompts, setTeacherPrompts] = useState<string[]>([]);
   const [teacherResponses, setTeacherResponses] = useState<
@@ -119,28 +213,37 @@ export default function ReviewActivity({
   const [isLoading, setIsLoading] = useState(false);
   const [completed, setCompleted] = useState(false);
   const [showNotebookReminder, setShowNotebookReminder] = useState(true);
-  const [hasGenerated, setHasGenerated] = useState(false);
+  const hasInitializedRef = useRef(false);
   const supabase = createClient();
 
   // Use pre-generated flashcard terms if available, otherwise generate them
   useEffect(() => {
+    // Prevent multiple initializations
+    if (hasInitializedRef.current) {
+      return;
+    }
+
     if (reviewType === "flashcards") {
       // If we have pre-generated terms from the activity, use them
       if (initialFlashcardTerms.length > 0) {
-        console.log(`✅ Using ${initialFlashcardTerms.length} pre-generated flashcard terms`);
+        console.log(
+          `✅ Using ${initialFlashcardTerms.length} pre-generated flashcard terms`
+        );
         setFlashcardTerms(initialFlashcardTerms);
-        setHasGenerated(true);
-      } else if (flashcardTerms.length === 0 && !hasGenerated) {
+        hasInitializedRef.current = true;
+      } else if (flashcardTerms.length === 0) {
         // Only generate if no pre-generated terms exist
-        console.log("⚠️ No pre-generated terms found, generating flashcards on-the-fly (this should be avoided)");
-        setHasGenerated(true);
+        console.log(
+          "⚠️ No pre-generated terms found, generating flashcards on-the-fly (this should be avoided)"
+        );
+        hasInitializedRef.current = true;
         generateFlashcardTerms();
       }
-    } else if (reviewType === "teacher_review" && teacherPrompts.length === 0 && !hasGenerated) {
-      setHasGenerated(true);
+    } else if (reviewType === "teacher_review" && teacherPrompts.length === 0) {
+      hasInitializedRef.current = true;
       loadTeacherPrompts();
     }
-  }, [reviewType, initialFlashcardTerms.length]);
+  }, [reviewType]);
 
   const generateFlashcardTerms = async () => {
     // Prevent multiple simultaneous calls
@@ -153,13 +256,17 @@ export default function ReviewActivity({
     try {
       // Build context from uploaded sources
       let contextText = nodeConfig.context || "";
-      
+
       if (contextSources && contextSources.length > 0) {
         const contextParts = contextSources.map((source) => {
           if (source.type === "document" || source.type === "pdf") {
-            return `Document: ${source.title}\n${source.summary || ""}\nKey Points: ${(source.key_points || []).join(", ")}`;
+            return `Document: ${source.title}\n${
+              source.summary || ""
+            }\nKey Points: ${(source.key_points || []).join(", ")}`;
           } else if (source.type === "youtube" || source.type === "video") {
-            return `Video: ${source.title}\n${source.summary || ""}\nKey Concepts: ${(source.key_concepts || []).join(", ")}`;
+            return `Video: ${source.title}\n${
+              source.summary || ""
+            }\nKey Concepts: ${(source.key_concepts || []).join(", ")}`;
           }
           return "";
         });
@@ -167,7 +274,9 @@ export default function ReviewActivity({
       }
 
       // Get user ID for rate limiting
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
 
       const response = await fetch("/api/ai/generate-flashcards", {
         method: "POST",
@@ -270,7 +379,9 @@ export default function ReviewActivity({
       };
 
       // Save responses to database for analytics
-      const { data: { user } } = await supabase.auth.getUser();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
       if (user) {
         await supabase.from("review_responses").insert({
           activity_id: activityId,
@@ -315,7 +426,9 @@ export default function ReviewActivity({
               console.error("Error in misconception analysis:", errorData);
             }
           } else {
-            const analysisData = await analysisResponse.json().catch(() => null);
+            const analysisData = await analysisResponse
+              .json()
+              .catch(() => null);
             analysisResult =
               analysisData?.analysis ||
               analysisData?.data ||
@@ -329,14 +442,18 @@ export default function ReviewActivity({
         }
       }
 
+      // Set completed first to prevent re-renders
       setCompleted(true);
-      onComplete({
-        responses,
-        analysis: analysisResult,
-      });
+
+      // Call onComplete after a brief delay to ensure state is set
+      setTimeout(() => {
+        onComplete({
+          responses,
+          analysis: analysisResult,
+        });
+      }, 100);
     } catch (error) {
       console.error("Error completing review:", error);
-    } finally {
       setIsLoading(false);
     }
   };
@@ -355,6 +472,7 @@ export default function ReviewActivity({
   }
 
   if (completed) {
+    // Once completed, don't re-render - just show completion message
     return (
       <Card className="w-full max-w-4xl mx-auto">
         <CardContent className="p-8 text-center">
@@ -388,28 +506,6 @@ export default function ReviewActivity({
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {showNotebookReminder && (
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-              <BookOpen className="h-5 w-5 text-blue-600 mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm font-medium text-blue-900 mb-1">
-                  Get your notebook ready!
-                </p>
-                <p className="text-sm text-blue-700">
-                  For each term shown, please write the definition in your
-                  notebook. Then enter it here to continue.
-                </p>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowNotebookReminder(false)}
-              >
-                Got it
-              </Button>
-            </div>
-          )}
-
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <Badge variant="outline">
@@ -420,11 +516,15 @@ export default function ReviewActivity({
 
             <div className="bg-gray-50 rounded-lg p-6 border-2 border-dashed border-gray-300">
               <div className="text-center mb-6">
-                <h3 className="text-2xl font-bold text-gray-900 mb-2">
-                  {currentTerm?.term}
-                </h3>
+                <h3
+                  className="text-2xl font-bold text-gray-900 mb-2"
+                  dangerouslySetInnerHTML={{
+                    __html: renderMathInText(currentTerm?.term || ""),
+                  }}
+                />
                 <p className="text-sm text-gray-500">
-                  Write the definition in your notebook, then enter it below
+                  {nodeConfig.instructions ||
+                    "Write on your notebook and then here"}
                 </p>
               </div>
 
@@ -454,10 +554,7 @@ export default function ReviewActivity({
                 <Button
                   onClick={() =>
                     setCurrentTermIndex(
-                      Math.min(
-                        flashcardTerms.length - 1,
-                        currentTermIndex + 1
-                      )
+                      Math.min(flashcardTerms.length - 1, currentTermIndex + 1)
                     )
                   }
                   disabled={!currentTerm?.studentDefinition.trim()}
@@ -519,16 +616,21 @@ export default function ReviewActivity({
 
           <div className="bg-gray-50 rounded-lg p-6 border-2 border-dashed border-gray-300">
             <div className="mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 mb-2">
-                {currentPrompt}
-              </h3>
+              <h3
+                className="text-lg font-semibold text-gray-900 mb-2"
+                dangerouslySetInnerHTML={{
+                  __html: renderMathInText(currentPrompt || ""),
+                }}
+              />
             </div>
+            <p className="text-sm text-gray-500 mb-4">
+              {nodeConfig.instructions ||
+                "Write on your notebook and then here"}
+            </p>
 
             <AdvancedTextarea
               value={teacherResponses[currentPromptIndex] || ""}
-              onChange={(val) =>
-                updateTeacherResponse(currentPromptIndex, val)
-              }
+              onChange={(val) => updateTeacherResponse(currentPromptIndex, val)}
               placeholder="Enter your response here..."
               rows={6}
               previewLabel="Preview"
@@ -582,4 +684,3 @@ export default function ReviewActivity({
     </Card>
   );
 }
-

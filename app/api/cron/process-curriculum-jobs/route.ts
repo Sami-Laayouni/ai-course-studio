@@ -1,19 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 /**
  * Cron endpoint for processing curriculum jobs
  * 
  * This endpoint should be called by:
- * - Vercel Cron Jobs (recommended): Add to vercel.json
  * - Google Cloud Scheduler: Schedule HTTP requests to this endpoint
+ * - Vercel Cron Jobs: Add to vercel.json
  * - Any other cron service
  * 
  * Setup:
  * 1. Set CRON_SECRET in your environment variables
- * 2. Configure your cron service to call: POST /api/cron/process-curriculum-jobs?cron_secret=YOUR_SECRET
- * 3. Recommended schedule: Every 1-5 minutes
+ * 2. Configure your cron service to call: GET /api/cron/process-curriculum-jobs?cron_secret=YOUR_SECRET
+ * 3. Recommended schedule: Every 5 minutes (*/5 * * * *)
  */
 export async function GET(request: NextRequest) {
   try {
@@ -32,30 +34,67 @@ export async function GET(request: NextRequest) {
 
     console.log("📤 [CRON] Processing curriculum jobs...");
 
-    // Call the process-jobs endpoint
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const response = await fetch(`${baseUrl}/api/curriculum/process-jobs`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ max_jobs: 10 }), // Process up to 10 jobs per run
-    });
+    const supabase = await createClient();
+    const maxJobs = 10; // Process up to 10 jobs per run
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      console.error("❌ [CRON] Failed to process jobs:", errorData);
+    // Get pending jobs, ordered by priority and creation time
+    const { data: jobs, error: jobsError } = await supabase
+      .from("curriculum_processing_jobs")
+      .select("*")
+      .eq("status", "pending")
+      .order("priority", { ascending: true })
+      .order("created_at", { ascending: true })
+      .limit(maxJobs);
+
+    if (jobsError) {
+      console.error("❌ [CRON] Error fetching jobs:", jobsError);
       return NextResponse.json(
-        { error: "Failed to process jobs", details: errorData },
+        { error: "Failed to fetch jobs", details: jobsError.message },
         { status: 500 }
       );
     }
 
-    const data = await response.json();
-    console.log("✅ [CRON] Processed jobs:", data);
+    if (!jobs || jobs.length === 0) {
+      console.log("✅ [CRON] No pending jobs");
+      return NextResponse.json({ 
+        success: true,
+        processed: 0,
+        message: "No pending jobs",
+        timestamp: new Date().toISOString()
+      });
+    }
+
+    console.log(`📤 [CRON] Found ${jobs.length} pending job(s)`);
+
+    // Import and use the processJob function directly
+    const processJobsModule = await import("@/app/api/curriculum/process-jobs/route");
+    const processJob = processJobsModule.processJob;
+    
+    // Process jobs sequentially to avoid overwhelming the system
+    const results = [];
+    for (const job of jobs) {
+      try {
+        await processJob(job, supabase);
+        results.push({ jobId: job.id, status: "success" });
+        console.log(`✅ [CRON] Processed job ${job.id}`);
+      } catch (error: any) {
+        console.error(`❌ [CRON] Failed to process job ${job.id}:`, error);
+        results.push({ jobId: job.id, status: "failed", error: error.message });
+      }
+    }
+
+    const successful = results.filter((r) => r.status === "success").length;
+    const failed = results.filter((r) => r.status === "failed").length;
+
+    console.log(`✅ [CRON] Completed: ${successful} successful, ${failed} failed`);
 
     return NextResponse.json({
       success: true,
+      processed: successful,
+      failed,
+      total: jobs.length,
+      results,
       timestamp: new Date().toISOString(),
-      ...data,
     });
   } catch (error: any) {
     console.error("❌ [CRON] Cron job error:", error);

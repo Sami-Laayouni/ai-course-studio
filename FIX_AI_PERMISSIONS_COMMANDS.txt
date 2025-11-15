@@ -1,0 +1,21 @@
+# Exact Commands to Fix AI Permissions
+# Based on your .env.local values:
+#   Project ID: ai-course-studio
+#   Service Account: noteswap-backend@ai-course-studio.iam.gserviceaccount.com
+
+# Run these commands in PowerShell or Command Prompt (with gcloud CLI installed):
+
+# 1. Enable Generative Language API
+gcloud services enable generativelanguage.googleapis.com --project=ai-course-studio
+
+# 2. Enable Vertex AI API
+gcloud services enable aiplatform.googleapis.com --project=ai-course-studio
+
+# 3. Grant Vertex AI User role to your service account
+gcloud projects add-iam-policy-binding ai-course-studio --member="serviceAccount:noteswap-backend@ai-course-studio.iam.gserviceaccount.com" --role="roles/aiplatform.user"
+
+# After running these commands:
+# - Wait 1-2 minutes for changes to propagate
+# - Test your application again
+# - The 403 error should be resolved
+
