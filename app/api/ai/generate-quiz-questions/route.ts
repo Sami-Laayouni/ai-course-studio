@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
+import genAI from "@/lib/genai";
 
 export async function POST(request: NextRequest) {
   try {
@@ -47,10 +46,30 @@ Return JSON response:
 Make questions clear, fair, and educational. Avoid trick questions.
 `;
 
-    const { text } = await generateText({
-      model: google("gemini-1.5-flash"),
-      prompt,
+    requireAIConfiguration();
+
+    const config = {
+      ...getDefaultConfig(),
+      maxOutputTokens: 1000,
+    };
+
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
+      config,
+      contents: [
+        {
+          role: "user",
+          text: prompt,
+        },
+      ],
     });
+
+    let text = "";
+    for await (const chunk of response) {
+      if (chunk.text) {
+        text += chunk.text;
+      }
+    }
 
     let result;
     try {

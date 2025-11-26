@@ -37,8 +37,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Lesson not found" }, { status: 404 });
     }
 
-    // Verify join code
-    if (lesson.courses.join_code !== join_code) {
+    // Normalize and verify join code (case-insensitive comparison)
+    const normalizedJoinCode = join_code?.trim().toUpperCase();
+    const normalizedCourseJoinCode = lesson.courses.join_code?.trim().toUpperCase();
+    
+    if (normalizedCourseJoinCode !== normalizedJoinCode) {
       return NextResponse.json({ error: "Invalid join code" }, { status: 400 });
     }
 

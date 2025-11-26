@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
+import { ai, getModelName, getDefaultConfig, requireAIConfiguration } from "@/lib/ai-config";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+export const dynamic = 'force-dynamic';
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,26 +29,39 @@ Format your response as JSON:
   "keyConcepts": ["concept 1", "concept 2", ...]
 }`;
 
-    const completion = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo",
-      messages: [
+    requireAIConfiguration();
+
+    const config = {
+      ...getDefaultConfig(),
+      responseMimeType: "application/json" as const,
+      maxOutputTokens: 1000,
+      systemInstruction: [
         {
-          role: "system",
-          content: "You are an expert educational content analyzer. Extract key points and concepts from educational content to help students learn effectively."
+          text: "You are an expert educational content analyzer. Extract key points and concepts from educational content to help students learn effectively.",
         },
+      ],
+    };
+
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
+      config,
+      contents: [
         {
           role: "user",
-          content: prompt
-        }
+          text: prompt,
+        },
       ],
-      max_tokens: 1000,
-      temperature: 0.3,
     });
 
-    const response = completion.choices[0]?.message?.content;
+    let responseText = "";
+    for await (const chunk of response) {
+      if (chunk.text) {
+        responseText += chunk.text;
+      }
+    }
     
-    if (!response) {
-      throw new Error("No response from OpenAI");
+    if (!responseText) {
+      throw new Error("No response from Google AI");
     }
 
     // Try to parse JSON response
@@ -58,12 +69,12 @@ Format your response as JSON:
     let keyConcepts: string[] = [];
 
     try {
-      const parsed = JSON.parse(response);
+      const parsed = JSON.parse(responseText);
       keyPoints = parsed.keyPoints || [];
       keyConcepts = parsed.keyConcepts || [];
     } catch (parseError) {
       // Fallback: extract from text response
-      const lines = response.split('\n');
+      const lines = responseText.split('\n');
       let currentSection = '';
       
       for (const line of lines) {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import { generateUUID } from "@/lib/utils";
 import {
   Card,
@@ -24,6 +24,7 @@ import {
   Settings,
   Zap,
   ArrowRight,
+  ArrowLeft,
   Target,
   Brain,
   Gamepad2,
@@ -39,6 +40,8 @@ import {
   BookOpen,
   File,
   Play as PlayIcon,
+  UploadCloud,
+  Save,
 } from "lucide-react";
 import ContextSelector from "./context-selector";
 
@@ -68,6 +71,10 @@ interface ActivityBuilderProps {
   onActivityCreated: (activity: any) => void;
   onClose: () => void;
   courseId?: string;
+  title?: string;
+  description?: string;
+  activityId?: string;
+  initialContent?: any;
 }
 
 const NODE_TYPES = [
@@ -78,6 +85,7 @@ const NODE_TYPES = [
     icon: Play,
     color: "bg-green-500",
     category: "flow",
+    isRequired: true,
   },
   {
     id: "quiz",
@@ -89,18 +97,34 @@ const NODE_TYPES = [
   },
   {
     id: "ai_chat",
-    name: "AI Chat",
-    description: "Personalized AI tutoring",
+    name: "AI Tutor",
+    description: "Personalized AI tutoring with context",
     icon: Brain,
     color: "bg-purple-500",
     category: "interactive",
+  },
+  {
+    id: "video",
+    name: "Video",
+    description: "YouTube video with interactions",
+    icon: Video,
+    color: "bg-red-500",
+    category: "content",
+  },
+  {
+    id: "pdf",
+    name: "Document Upload",
+    description: "Upload PDFs, slideshows, and documents",
+    icon: UploadCloud,
+    color: "bg-orange-500",
+    category: "content",
   },
   {
     id: "game",
     name: "Game",
     description: "Educational games and simulations",
     icon: Gamepad2,
-    color: "bg-orange-500",
+    color: "bg-yellow-500",
     category: "interactive",
   },
   {
@@ -112,24 +136,8 @@ const NODE_TYPES = [
     category: "social",
   },
   {
-    id: "content",
-    name: "Content",
-    description: "Reading materials and videos",
-    icon: FileText,
-    color: "bg-indigo-500",
-    category: "content",
-  },
-  {
-    id: "video",
-    name: "Video",
-    description: "Educational videos with interactions",
-    icon: Video,
-    color: "bg-red-500",
-    category: "content",
-  },
-  {
     id: "end",
-    name: "End",
+    name: "Complete",
     description: "Activity completion",
     icon: CheckCircle,
     color: "bg-gray-500",
@@ -150,6 +158,10 @@ export default function ZapierStyleActivityBuilder({
   onActivityCreated,
   onClose,
   courseId,
+  title = "",
+  description = "",
+  activityId,
+  initialContent,
 }: ActivityBuilderProps) {
   const [nodes, setNodes] = useState<ActivityNode[]>([]);
   const [connections, setConnections] = useState<
@@ -167,11 +179,143 @@ export default function ZapierStyleActivityBuilder({
     ContextSource[]
   >([]);
   const [showContextSelector, setShowContextSelector] = useState(false);
+  const [isAutoSaving, setIsAutoSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   const canvasRef = useRef<HTMLDivElement>(null);
   const nodeIdCounter = useRef(0);
+  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const getNextNodeId = () => `node_${++nodeIdCounter.current}`;
+
+  // Auto-save functionality
+  const autoSave = useCallback(async () => {
+    if (!courseId) return; // Don't auto-save if we don't have courseId
+    const finalTitle = title || "Custom Activity";
+
+    setIsAutoSaving(true);
+    try {
+      const activityData = {
+        course_id: courseId,
+        title: finalTitle,
+        description: description || "",
+        content: {
+          nodes: nodes.map((node) => ({
+            id: node.id,
+            type: node.type,
+            title: node.title,
+            description: node.description,
+            position: node.position,
+            config: {
+              ...node.config,
+              ...(node.type === "ai_chat" && {
+                context_sources: selectedContextSources,
+              }),
+            },
+          })),
+          connections,
+          workflow_type: "enhanced",
+          context_sources: selectedContextSources,
+        },
+        activity_type: "custom",
+        activity_subtype: "zapier_workflow",
+        is_enhanced: true,
+        is_adaptive: true,
+      };
+
+      // Save to localStorage as draft
+      const draftKey = `activity_draft_${activityId || courseId}_${Date.now()}`;
+      localStorage.setItem(
+        draftKey,
+        JSON.stringify({
+          ...activityData,
+          lastSaved: new Date().toISOString(),
+        })
+      );
+
+      // If we have an activityId, try to save to database
+      if (activityId) {
+        try {
+          const response = await fetch("/api/activities", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: activityId,
+              ...activityData,
+            }),
+          });
+          if (response.ok) {
+            setLastSaved(new Date());
+          }
+        } catch (error) {
+          console.error("Auto-save to database failed:", error);
+        }
+      }
+    } catch (error) {
+      console.error("Auto-save failed:", error);
+    } finally {
+      setIsAutoSaving(false);
+    }
+  }, [
+    courseId,
+    title,
+    description,
+    nodes,
+    connections,
+    selectedContextSources,
+    activityId,
+  ]);
+
+  // Debounced auto-save
+  useEffect(() => {
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+    autoSaveTimeoutRef.current = setTimeout(() => {
+      if (nodes.length > 0 || connections.length > 0) {
+        autoSave();
+      }
+    }, 2000); // Auto-save 2 seconds after last change
+
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, [nodes, connections, autoSave]);
+
+  // Load initial content if provided
+  useEffect(() => {
+    if (initialContent?.nodes && initialContent?.connections) {
+      setNodes(initialContent.nodes);
+      setConnections(initialContent.connections);
+      if (initialContent.context_sources) {
+        setSelectedContextSources(initialContent.context_sources);
+      }
+    } else if (nodes.length === 0) {
+      // Auto-add start and end nodes if empty
+      const startNode: ActivityNode = {
+        id: getNextNodeId(),
+        type: "start",
+        title: "Start",
+        description: "Activity begins here",
+        position: { x: 200, y: 200 },
+        config: {},
+        connections: [],
+      };
+      const endNode: ActivityNode = {
+        id: getNextNodeId(),
+        type: "end",
+        title: "Complete",
+        description: "Activity completion",
+        position: { x: 600, y: 200 },
+        config: {},
+        connections: [],
+      };
+      setNodes([startNode, endNode]);
+    }
+  }, [initialContent]);
 
   const addNode = (nodeType: any, position: { x: number; y: number }) => {
     const newNode: ActivityNode = {
@@ -184,6 +328,7 @@ export default function ZapierStyleActivityBuilder({
       connections: [],
     };
     setNodes((prev) => [...prev, newNode]);
+    setSelectedNode(newNode);
   };
 
   const updateNode = (nodeId: string, updates: Partial<ActivityNode>) => {
@@ -193,6 +338,11 @@ export default function ZapierStyleActivityBuilder({
   };
 
   const deleteNode = (nodeId: string) => {
+    const nodeType = NODE_TYPES.find(
+      (nt) => nt.id === nodes.find((n) => n.id === nodeId)?.type
+    );
+    if (nodeType?.isRequired) return; // Don't delete required nodes
+
     setNodes((prev) => prev.filter((node) => node.id !== nodeId));
     setConnections((prev) =>
       prev.filter((conn) => conn.from !== nodeId && conn.to !== nodeId)
@@ -269,36 +419,85 @@ export default function ZapierStyleActivityBuilder({
     return NODE_TYPES.filter((nt) => nt.category === selectedCategory);
   };
 
-  const generateActivity = () => {
-    const activity = {
-      id: generateUUID(),
-      type: "custom_workflow",
-      title: "Custom Activity Workflow",
-      description: "A custom activity created with the visual builder",
-      content: {
-        nodes: nodes.map((node) => ({
-          id: node.id,
-          type: node.type,
-          title: node.title,
-          description: node.description,
-          position: node.position,
-          config: {
-            ...node.config,
-            // Add context sources for AI chat nodes
-            ...(node.type === "ai_chat" && {
-              context_sources: selectedContextSources,
-            }),
-          },
-        })),
-        connections,
-        workflow_type: "custom",
-        context_sources: selectedContextSources, // Global context for the activity
-      },
-      points: 100,
-      estimated_duration: nodes.length * 5, // 5 minutes per node
-    };
+  const generateActivity = async () => {
+    const finalTitle = title || "Custom Activity";
+    if (!finalTitle) {
+      alert("Please provide a title for the activity");
+      return;
+    }
 
-    onActivityCreated(activity);
+    setIsSaving(true);
+    try {
+      // Check for enhanced features
+      const hasAIChatNodes = nodes.some((n) => n.type === "ai_chat");
+      const hasUploadNodes = nodes.some((n) => n.type === "pdf");
+      const hasVideoNodes = nodes.some((n) => n.type === "video");
+
+      const activity = {
+        id: activityId || generateUUID(),
+        type: "enhanced_workflow",
+        title: finalTitle, // Use title from props or default
+        description: description || "", // Use description from props
+        content: {
+          nodes: nodes.map((node) => ({
+            id: node.id,
+            type: node.type,
+            title: node.title,
+            description: node.description,
+            position: node.position,
+            config: {
+              ...node.config,
+              // Add context sources for AI chat nodes
+              ...(node.type === "ai_chat" && {
+                context_sources: selectedContextSources,
+              }),
+              // Add upload configuration for PDF nodes
+              ...(node.type === "pdf" && {
+                upload_enabled: true,
+                accepted_types: [
+                  ".pdf",
+                  ".pptx",
+                  ".ppt",
+                  ".docx",
+                  ".doc",
+                  ".jpg",
+                  ".jpeg",
+                  ".png",
+                ],
+                max_size_mb: 10,
+              }),
+            },
+          })),
+          connections,
+          workflow_type: "enhanced",
+          context_sources: selectedContextSources,
+          features: {
+            ai_tutoring: hasAIChatNodes,
+            document_upload: hasUploadNodes,
+            video_content: hasVideoNodes,
+            performance_tracking: hasAIChatNodes,
+          },
+        },
+        points: Math.max(50, nodes.length * 15),
+        estimated_duration: Math.max(15, nodes.length * 5),
+        difficulty_level: Math.min(
+          5,
+          Math.max(1, Math.floor(nodes.length / 2))
+        ),
+        is_adaptive: true,
+        is_enhanced: true,
+        supports_upload: hasUploadNodes,
+        supports_slideshow: hasUploadNodes,
+        performance_tracking: hasAIChatNodes,
+      };
+
+      onActivityCreated(activity);
+    } catch (error) {
+      console.error("Error generating activity:", error);
+      alert("Failed to save activity. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const renderNode = (node: ActivityNode) => {
@@ -398,20 +597,49 @@ export default function ZapierStyleActivityBuilder({
   return (
     <div className="h-screen flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b">
-        <div>
-          <h2 className="text-xl font-semibold">Activity Builder</h2>
-          <p className="text-sm text-gray-600">
-            Create custom activities with drag & drop
-          </p>
+      <div className="flex items-center justify-between p-4 border-b bg-white dark:bg-gray-900">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
+          <div>
+            <h2 className="text-xl font-semibold">Activity Builder</h2>
+            <p className="text-sm text-gray-600">
+              {title || "Create custom activities with drag & drop"}
+            </p>
+          </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {isAutoSaving && (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Save className="h-4 w-4 animate-pulse" />
+              <span>Saving...</span>
+            </div>
+          )}
+          {lastSaved && !isAutoSaving && (
+            <div className="text-xs text-gray-500">
+              Saved {lastSaved.toLocaleTimeString()}
+            </div>
+          )}
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={generateActivity} disabled={nodes.length === 0}>
-            <Zap className="h-4 w-4 mr-2" />
-            Generate Activity
+          <Button
+            onClick={generateActivity}
+            disabled={nodes.length === 0 || isSaving}
+          >
+            {isSaving ? (
+              <>
+                <Save className="h-4 w-4 mr-2 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Zap className="h-4 w-4 mr-2" />
+                Save Activity
+              </>
+            )}
           </Button>
         </div>
       </div>

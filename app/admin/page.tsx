@@ -1,59 +1,83 @@
-import { createServerClient } from "@/lib/supabase/server"
-import { redirect } from "next/navigation"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
-import { Users, BookOpen, Settings, Database, Shield, Activity } from "lucide-react"
+import { createServerClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Users,
+  BookOpen,
+  Settings,
+  Database,
+  Shield,
+  Activity,
+} from "lucide-react";
 
 export default async function AdminPage() {
-  const supabase = await createServerClient()
+  const supabase = await createServerClient();
 
   const {
     data: { user },
-  } = await supabase.auth.getUser()
-  if (!user) redirect("/auth/login")
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/auth/login");
 
   // Get user profile
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).single()
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", user.id)
+    .single();
 
   if (profile?.role !== "admin") {
-    redirect("/dashboard")
+    redirect("/dashboard");
   }
 
   // Get system statistics
-  const { data: users } = await supabase.from("profiles").select("id, role")
-  const { data: courses } = await supabase.from("courses").select("id, created_at")
-  const { data: activities } = await supabase.from("activities").select("id, created_at")
-  const { data: enrollments } = await supabase.from("course_enrollments").select("id, enrolled_at")
+  const { data: users } = await supabase.from("profiles").select("id, role");
+  const { data: courses } = await supabase
+    .from("courses")
+    .select("id, created_at");
+  const { data: activities } = await supabase
+    .from("activities")
+    .select("id, created_at");
+  const { data: enrollments } = await supabase
+    .from("course_enrollments")
+    .select("id, enrolled_at");
 
-  const usersByRole = users?.reduce(
-    (acc, user) => {
-      acc[user.role] = (acc[user.role] || 0) + 1
-      return acc
-    },
-    {} as Record<string, number>,
-  )
+  const usersByRole = users?.reduce((acc, user) => {
+    acc[user.role] = (acc[user.role] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
 
   // Get recent activity
   const { data: recentUsers } = await supabase
     .from("profiles")
     .select("*")
     .order("created_at", { ascending: false })
-    .limit(5)
+    .limit(5);
 
   const { data: recentCourses } = await supabase
     .from("courses")
     .select("*, teacher:profiles!courses_teacher_id_fkey(full_name)")
     .order("created_at", { ascending: false })
-    .limit(5)
+    .limit(5);
 
   return (
     <div className="container mx-auto p-6 space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Admin Dashboard</h1>
-          <p className="text-muted-foreground">Manage users, courses, and system settings</p>
+          <h1 className="text-3xl font-bold text-foreground">
+            Admin Dashboard
+          </h1>
+          <p className="text-muted-foreground">
+            Manage users, courses, and system settings
+          </p>
         </div>
       </div>
 
@@ -67,7 +91,8 @@ export default async function AdminPage() {
           <CardContent>
             <div className="text-2xl font-bold">{users?.length || 0}</div>
             <p className="text-xs text-muted-foreground">
-              {usersByRole?.teacher || 0} teachers, {usersByRole?.student || 0} students
+              {usersByRole?.teacher || 0} teachers, {usersByRole?.student || 0}{" "}
+              students
             </p>
           </CardContent>
         </Card>
@@ -85,7 +110,9 @@ export default async function AdminPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Activities</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Total Activities
+            </CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -96,7 +123,9 @@ export default async function AdminPage() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Enrollments</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Total Enrollments
+            </CardTitle>
             <Shield className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
@@ -125,7 +154,9 @@ export default async function AdminPage() {
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <span className="font-medium">Administrators</span>
-                    <Badge variant="destructive">{usersByRole?.admin || 0}</Badge>
+                    <Badge variant="destructive">
+                      {usersByRole?.admin || 0}
+                    </Badge>
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="font-medium">Teachers</span>
@@ -133,7 +164,9 @@ export default async function AdminPage() {
                   </div>
                   <div className="flex items-center justify-between">
                     <span className="font-medium">Students</span>
-                    <Badge variant="secondary">{usersByRole?.student || 0}</Badge>
+                    <Badge variant="secondary">
+                      {usersByRole?.student || 0}
+                    </Badge>
                   </div>
                 </div>
               </CardContent>
@@ -147,14 +180,23 @@ export default async function AdminPage() {
               <CardContent>
                 <div className="space-y-3">
                   {recentUsers?.map((user) => (
-                    <div key={user.id} className="flex items-center justify-between">
+                    <div
+                      key={user.id}
+                      className="flex items-center justify-between"
+                    >
                       <div>
                         <p className="font-medium">{user.full_name}</p>
-                        <p className="text-sm text-muted-foreground">{user.email}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {user.email}
+                        </p>
                       </div>
                       <Badge
                         variant={
-                          user.role === "admin" ? "destructive" : user.role === "teacher" ? "default" : "secondary"
+                          user.role === "admin"
+                            ? "destructive"
+                            : user.role === "teacher"
+                            ? "default"
+                            : "secondary"
                         }
                       >
                         {user.role}
@@ -171,7 +213,9 @@ export default async function AdminPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>All Users</CardTitle>
-                  <CardDescription>Manage user accounts and permissions</CardDescription>
+                  <CardDescription>
+                    Manage user accounts and permissions
+                  </CardDescription>
                 </div>
                 <Button>Add User</Button>
               </div>
@@ -179,20 +223,31 @@ export default async function AdminPage() {
             <CardContent>
               <div className="space-y-4">
                 {users?.map((user) => (
-                  <div key={user.id} className="flex items-center justify-between p-4 border rounded-lg">
+                  <div
+                    key={user.id}
+                    className="flex items-center justify-between p-4 border rounded-lg"
+                  >
                     <div className="flex items-center space-x-4">
                       <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
                         <Users className="h-5 w-5 text-primary" />
                       </div>
                       <div>
-                        <p className="font-medium">User {user.id.slice(0, 8)}...</p>
-                        <p className="text-sm text-muted-foreground">Role: {user.role}</p>
+                        <p className="font-medium">
+                          User {user.id.slice(0, 8)}...
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Role: {user.role}
+                        </p>
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Badge
                         variant={
-                          user.role === "admin" ? "destructive" : user.role === "teacher" ? "default" : "secondary"
+                          user.role === "admin"
+                            ? "destructive"
+                            : user.role === "teacher"
+                            ? "default"
+                            : "secondary"
                         }
                       >
                         {user.role}
@@ -214,7 +269,9 @@ export default async function AdminPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>Course Management</CardTitle>
-                  <CardDescription>Monitor and manage all courses</CardDescription>
+                  <CardDescription>
+                    Monitor and manage all courses
+                  </CardDescription>
                 </div>
                 <Button variant="outline">Export Data</Button>
               </div>
@@ -222,7 +279,10 @@ export default async function AdminPage() {
             <CardContent>
               <div className="space-y-4">
                 {recentCourses?.map((course) => (
-                  <div key={course.id} className="flex items-center justify-between p-4 border rounded-lg">
+                  <div
+                    key={course.id}
+                    className="flex items-center justify-between p-4 border rounded-lg"
+                  >
                     <div className="flex items-center space-x-4">
                       <div className="w-10 h-10 bg-primary/10 rounded-full flex items-center justify-center">
                         <BookOpen className="h-5 w-5 text-primary" />
@@ -238,7 +298,7 @@ export default async function AdminPage() {
                     <div className="flex items-center space-x-2">
                       <Badge variant="outline">{course.grade_level}</Badge>
                       <Button variant="outline" size="sm">
-                        View
+                        Create
                       </Button>
                     </div>
                   </div>
@@ -259,21 +319,27 @@ export default async function AdminPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium">AI Content Generation</p>
-                    <p className="text-sm text-muted-foreground">Enable AI-powered content creation</p>
+                    <p className="text-sm text-muted-foreground">
+                      Enable AI-powered content creation
+                    </p>
                   </div>
                   <Badge variant="default">Enabled</Badge>
                 </div>
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium">Student Analytics</p>
-                    <p className="text-sm text-muted-foreground">Track student progress and performance</p>
+                    <p className="text-sm text-muted-foreground">
+                      Track student progress and performance
+                    </p>
                   </div>
                   <Badge variant="default">Enabled</Badge>
                 </div>
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="font-medium">Email Notifications</p>
-                    <p className="text-sm text-muted-foreground">Send progress updates to teachers</p>
+                    <p className="text-sm text-muted-foreground">
+                      Send progress updates to teachers
+                    </p>
                   </div>
                   <Badge variant="secondary">Disabled</Badge>
                 </div>
@@ -300,7 +366,9 @@ export default async function AdminPage() {
                 <div className="flex items-center justify-between">
                   <span className="font-medium">Total Records</span>
                   <span className="text-lg font-bold">
-                    {(users?.length || 0) + (courses?.length || 0) + (activities?.length || 0)}
+                    {(users?.length || 0) +
+                      (courses?.length || 0) +
+                      (activities?.length || 0)}
                   </span>
                 </div>
               </CardContent>
@@ -323,7 +391,9 @@ export default async function AdminPage() {
                     </div>
                     <div>
                       <p className="font-medium">Supabase</p>
-                      <p className="text-sm text-muted-foreground">Database & Authentication</p>
+                      <p className="text-sm text-muted-foreground">
+                        Database & Authentication
+                      </p>
                     </div>
                   </div>
                   <Badge variant="default">Connected</Badge>
@@ -335,8 +405,10 @@ export default async function AdminPage() {
                       <Settings className="h-4 w-4 text-blue-600" />
                     </div>
                     <div>
-                      <p className="font-medium">OpenAI API</p>
-                      <p className="text-sm text-muted-foreground">AI Content Generation</p>
+                      <p className="font-medium">Google AI API</p>
+                      <p className="text-sm text-muted-foreground">
+                        AI Content Generation
+                      </p>
                     </div>
                   </div>
                   <Badge variant="default">Connected</Badge>
@@ -357,7 +429,9 @@ export default async function AdminPage() {
                     </div>
                     <div>
                       <p className="font-medium">Google Classroom</p>
-                      <p className="text-sm text-muted-foreground">Import classes and students</p>
+                      <p className="text-sm text-muted-foreground">
+                        Import classes and students
+                      </p>
                     </div>
                   </div>
                   <Button variant="outline" size="sm">
@@ -372,7 +446,9 @@ export default async function AdminPage() {
                     </div>
                     <div>
                       <p className="font-medium">Canvas LMS</p>
-                      <p className="text-sm text-muted-foreground">Sync with Canvas courses</p>
+                      <p className="text-sm text-muted-foreground">
+                        Sync with Canvas courses
+                      </p>
                     </div>
                   </div>
                   <Button variant="outline" size="sm">
@@ -387,7 +463,9 @@ export default async function AdminPage() {
                     </div>
                     <div>
                       <p className="font-medium">Zoom</p>
-                      <p className="text-sm text-muted-foreground">Schedule virtual classes</p>
+                      <p className="text-sm text-muted-foreground">
+                        Schedule virtual classes
+                      </p>
                     </div>
                   </div>
                   <Button variant="outline" size="sm">
@@ -400,5 +478,5 @@ export default async function AdminPage() {
         </TabsContent>
       </Tabs>
     </div>
-  )
+  );
 }

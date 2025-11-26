@@ -1,34 +1,57 @@
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient();
+    // Check for required environment variables first
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      console.error("Missing NEXT_PUBLIC_SUPABASE_URL");
+      return NextResponse.json(
+        { error: "Server configuration error: Missing Supabase URL" },
+        { status: 500 }
+      );
+    }
 
-    // Get the current user
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser();
-
-    if (authError || !user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.error("Missing SUPABASE_SERVICE_ROLE_KEY");
+      return NextResponse.json(
+        { error: "Server configuration error: Missing Supabase service role key. Please set SUPABASE_SERVICE_ROLE_KEY in your environment variables." },
+        { status: 500 }
+      );
     }
 
     const body = await request.json();
-    const { full_name, role, school_name } = body;
+    const { user_id, email, full_name, role, school_name } = body;
+
+    // Validate required fields
+    if (!user_id) {
+      return NextResponse.json({ error: "user_id is required" }, { status: 400 });
+    }
 
     // Validate role
-    if (!["admin", "teacher", "student"].includes(role)) {
+    if (role && !["admin", "teacher", "student"].includes(role)) {
       return NextResponse.json({ error: "Invalid role" }, { status: 400 });
     }
 
-    // Create or update profile
-    const { error: profileError } = await supabase.from("profiles").upsert({
-      id: user.id,
-      email: user.email!,
+    // Use service role client to bypass RLS for profile creation
+    // This allows creating profiles for unconfirmed users
+    const serviceClient = createServiceClient();
+
+    // Get user email if not provided
+    let userEmail = email;
+    if (!userEmail) {
+      // Try to get email from auth.users using service role
+      const { data: authUser } = await serviceClient.auth.admin.getUserById(user_id);
+      userEmail = authUser?.user?.email || "";
+    }
+
+    // Create or update profile using service role (bypasses RLS)
+    const { error: profileError } = await serviceClient.from("profiles").upsert({
+      id: user_id,
+      email: userEmail,
       full_name: full_name || "",
-      role: role,
+      role: role || "teacher",
       school_name: school_name || "",
       updated_at: new Date().toISOString(),
     });
@@ -36,7 +59,7 @@ export async function POST(request: NextRequest) {
     if (profileError) {
       console.error("Profile creation error:", profileError);
       return NextResponse.json(
-        { error: "Failed to create profile" },
+        { error: "Failed to create profile", details: profileError.message },
         { status: 500 }
       );
     }
@@ -45,7 +68,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Error creating profile:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Internal server error", details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }

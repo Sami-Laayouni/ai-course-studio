@@ -113,7 +113,8 @@ export default function NewCoursePage() {
         throw new Error(data.error || "Failed to create course");
       }
 
-      router.push(`/dashboard/courses/${data.course.id}`);
+      // Redirect to course page with success message
+      router.push(`/dashboard/courses/${data.course.id}?created=true`);
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "An error occurred");
     } finally {

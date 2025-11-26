@@ -36,8 +36,10 @@ import {
   Settings,
   FileText,
   Play,
+  Eye,
 } from "lucide-react";
 import ContextSelector from "./context-selector";
+import { VisualDiagramRenderer } from "./visual-diagram-renderer";
 
 interface EnhancedAIChatProps {
   activityId: string;
@@ -53,6 +55,9 @@ interface ChatMessage {
   learning_objectives?: string[];
   concepts_identified?: string[];
   confidence_score?: number;
+  diagrams?: Array<{ type: string; code: string; language?: string }>;
+  teaching_style?: string;
+  adaptive_routing?: any;
   quiz_data?: {
     question: string;
     options: string[];
@@ -121,6 +126,8 @@ export default function EnhancedAIChat({
   const [canProceed, setCanProceed] = useState(false);
   const [selectedContextSources, setSelectedContextSources] = useState<ContextSource[]>([]);
   const [showContextSelector, setShowContextSelector] = useState(false);
+  const [learningStyle, setLearningStyle] = useState<"visual" | "auditory" | "kinesthetic" | "reading">("visual");
+  const [performanceHistory, setPerformanceHistory] = useState<any[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -219,6 +226,9 @@ export default function EnhancedAIChat({
           chat_history: messages.slice(-10),
           current_phase: currentPhase,
           context_sources: selectedContextSources,
+          learning_style: learningStyle,
+          performance_history: performanceHistory,
+          enable_visuals: true,
         }),
       });
 
@@ -236,9 +246,30 @@ export default function EnhancedAIChat({
         learning_objectives: data.learning_objectives,
         concepts_identified: data.concepts_identified,
         confidence_score: data.confidence_score,
+        diagrams: data.diagrams || [],
+        teaching_style: data.teaching_style,
+        adaptive_routing: data.adaptive_routing,
       };
 
       setMessages((prev) => [...prev, aiMessage]);
+
+      // Update performance history
+      if (data.performanceScore) {
+        setPerformanceHistory((prev) => [
+          ...prev,
+          {
+            type: "ai_chat",
+            score: data.performanceScore,
+            timestamp: Date.now(),
+          },
+        ]);
+      }
+
+      // Handle adaptive routing suggestions
+      if (data.adaptive_routing?.suggested_actions && data.adaptive_routing.suggested_actions.length > 0) {
+        console.log("Adaptive routing suggestions:", data.adaptive_routing.suggested_actions);
+        // Could show a notification or update UI based on suggestions
+      }
 
       // Update concepts mastery
       if (data.concepts_mastered) {
@@ -449,6 +480,29 @@ export default function EnhancedAIChat({
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Chat Interface */}
           <div className="lg:col-span-3">
+            {/* Learning Style Selector */}
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <label className="text-sm font-medium">Learning Style:</label>
+                  <select
+                    value={learningStyle}
+                    onChange={(e) => setLearningStyle(e.target.value as any)}
+                    className="px-3 py-1.5 text-sm border rounded-md bg-background"
+                  >
+                    <option value="visual">Visual</option>
+                    <option value="auditory">Auditory</option>
+                    <option value="kinesthetic">Kinesthetic</option>
+                    <option value="reading">Reading</option>
+                  </select>
+                </div>
+                <Badge variant="outline" className="flex items-center gap-1">
+                  <Eye className="h-3 w-3" />
+                  {learningStyle.charAt(0).toUpperCase() + learningStyle.slice(1)} Learner
+                </Badge>
+              </div>
+            </div>
+
             {/* Context Sources Header */}
             <div className="mb-4 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -562,7 +616,24 @@ export default function EnhancedAIChat({
                             <CheckCircle className="h-4 w-4 mt-1 text-orange-500" />
                           )}
                           <div className="flex-1">
-                            <p className="text-sm">{message.content}</p>
+                            <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+
+                            {/* Render diagrams if present */}
+                            {message.diagrams && message.diagrams.length > 0 && (
+                              <div className="mt-3 space-y-3">
+                                {message.diagrams.map((diagram, idx) => (
+                                  <VisualDiagramRenderer key={idx} diagram={diagram} />
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Show teaching style badge */}
+                            {message.teaching_style && (
+                              <Badge variant="outline" className="mt-2 text-xs">
+                                <Lightbulb className="h-3 w-3 mr-1" />
+                                {message.teaching_style}
+                              </Badge>
+                            )}
 
                             {message.type === "quiz" && message.quiz_data && (
                               <div className="mt-3 space-y-2">

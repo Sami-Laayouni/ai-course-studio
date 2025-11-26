@@ -489,11 +489,12 @@ export default function EnhancedAnalyticsDashboard() {
 
       {/* Main Analytics */}
       <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
+        <TabsList className="grid w-full grid-cols-6">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="students">Students</TabsTrigger>
           <TabsTrigger value="concepts">Concepts</TabsTrigger>
           <TabsTrigger value="activities">Activities</TabsTrigger>
+          <TabsTrigger value="misconceptions">Misconceptions</TabsTrigger>
           <TabsTrigger value="insights">Insights</TabsTrigger>
         </TabsList>
 
@@ -919,6 +920,151 @@ export default function EnhancedAnalyticsDashboard() {
               </Card>
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="misconceptions" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <AlertCircle className="h-5 w-5 text-red-600" />
+                Student Misconceptions Analysis
+              </CardTitle>
+              <CardDescription>
+                Detailed breakdown of misconceptions identified through review activities and AI analysis
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-6">
+                {/* Individual Student Misconceptions */}
+                <div>
+                  <h3 className="text-lg font-semibold mb-4">Individual Student Struggles</h3>
+                  <div className="space-y-4">
+                    {studentAnalytics.map((student) => (
+                      <Card key={student.id} className="border-l-4 border-l-red-500">
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <h4 className="font-semibold mb-2">{student.name}</h4>
+                              {student.struggling_concepts.length > 0 ? (
+                                <div className="space-y-2">
+                                  <p className="text-sm text-gray-600">
+                                    Struggling with:
+                                  </p>
+                                  <div className="flex flex-wrap gap-2">
+                                    {student.struggling_concepts.map((concept, idx) => (
+                                      <Badge
+                                        key={idx}
+                                        variant="destructive"
+                                        className="text-xs"
+                                      >
+                                        {concept}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                  <p className="text-sm text-gray-700 mt-2">
+                                    <strong>Understanding:</strong> {student.name} seems to understand{" "}
+                                    {student.mastered_concepts.slice(0, 2).join(", ")}
+                                    {student.mastered_concepts.length > 2 && " and more"}, but not{" "}
+                                    {student.struggling_concepts.slice(0, 2).join(", ")}
+                                    {student.struggling_concepts.length > 2 && " and more"}.
+                                  </p>
+                                </div>
+                              ) : (
+                                <p className="text-sm text-green-600">
+                                  No major misconceptions identified. Student is performing well.
+                                </p>
+                              )}
+                            </div>
+                            <div className="text-right">
+                              <Badge
+                                variant={
+                                  student.struggling_concepts.length > 0
+                                    ? "destructive"
+                                    : "default"
+                                }
+                              >
+                                {student.struggling_concepts.length} Issues
+                              </Badge>
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Common Struggles */}
+                <div>
+                  <h3 className="text-lg font-semibold mb-4">Common Struggles Across Students</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {conceptAnalytics
+                      .filter((c) => c.struggling_students > 0)
+                      .map((concept, idx) => (
+                        <Card key={idx} className="border-l-4 border-l-orange-500">
+                          <CardHeader>
+                            <CardTitle className="text-base">{concept.concept}</CardTitle>
+                            <CardDescription>
+                              {concept.struggling_students} of {concept.total_students} students struggling
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-2">
+                              <div>
+                                <p className="text-sm font-medium mb-1">Common Misconceptions:</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {concept.common_misconceptions.map((misconception, mIdx) => (
+                                    <Badge
+                                      key={mIdx}
+                                      variant="outline"
+                                      className="text-xs"
+                                    >
+                                      {misconception}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                              <div>
+                                <p className="text-sm font-medium mb-1">Recommended Interventions:</p>
+                                <ul className="text-xs text-gray-600 space-y-1">
+                                  {concept.recommended_activities.map((activity, aIdx) => (
+                                    <li key={aIdx}>• {activity}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                  </div>
+                </div>
+
+                {/* Real-time Insights */}
+                <Card className="bg-blue-50 border-blue-200">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2 text-blue-900">
+                      <Lightbulb className="h-5 w-5" />
+                      AI-Powered Insights
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3 text-sm text-blue-800">
+                      <p>
+                        <strong>Pattern Detected:</strong> Multiple students showing similar struggle patterns in{" "}
+                        {conceptAnalytics
+                          .filter((c) => c.struggling_students > conceptAnalytics.length * 0.3)
+                          .map((c) => c.concept)
+                          .join(", ") || "advanced topics"}.
+                      </p>
+                      <p>
+                        <strong>Recommendation:</strong> Consider creating additional review activities or
+                        providing targeted interventions for these concepts.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>

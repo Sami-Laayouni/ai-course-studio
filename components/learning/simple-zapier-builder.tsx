@@ -48,9 +48,15 @@ import {
   Clock,
   Layers,
   UploadCloud,
+  ClipboardCheck,
+  Sparkles,
+  PlusCircle,
+  RefreshCcw,
+  Maximize2,
 } from "lucide-react";
 import ContextSelector from "./context-selector";
 import AgenticActivityPlayer from "./agentic-activity-player";
+import { TextEditorModal } from "@/components/ui/text-editor-modal";
 import SimpleActivityPlayer from "./simple-activity-player";
 
 // Quiz Questions Component
@@ -291,6 +297,12 @@ interface ActivityNode {
   isConnected?: boolean;
 }
 
+interface FlashcardConfigTerm {
+  id: string;
+  term: string;
+  definition?: string;
+}
+
 interface ContextSource {
   id: string;
   type: "pdf" | "youtube";
@@ -308,6 +320,10 @@ interface SimpleZapierBuilderProps {
   onClose: () => void;
   courseId?: string;
   lessonId?: string;
+  title?: string;
+  description?: string;
+  activityId?: string;
+  initialContent?: any;
 }
 
 const NODE_TYPES = [
@@ -340,7 +356,7 @@ const NODE_TYPES = [
   {
     id: "pdf",
     name: "Document Upload",
-    description: "Upload PDFs, slideshows, and documents",
+    description: "Upload PDFs, slideshows, and documents for students",
     icon: UploadCloud,
     color: "#F97316",
     category: "content",
@@ -369,13 +385,74 @@ const NODE_TYPES = [
     color: "#7C3AED",
     category: "interactive",
   },
+  {
+    id: "review",
+    name: "Review",
+    description: "Review activity with flashcards and teacher prompts",
+    icon: ClipboardCheck,
+    color: "#10B981",
+    category: "assessment",
+  },
 ];
+
+const getDefaultConfigForNode = (typeId: string) => {
+  if (typeId === "review") {
+    return {
+      review_type: "flashcards",
+      num_terms: 10,
+      points: 50,
+      context: "",
+      flashcard_terms: [],
+    };
+  }
+  return {};
+};
+
+const applyNodeDefaults = (node: ActivityNode): ActivityNode => {
+  const defaults = getDefaultConfigForNode(node.type);
+  return {
+    ...node,
+    config: {
+      ...defaults,
+      ...(node.config || {}),
+    },
+  };
+};
+
+const normalizeFlashcardTerms = (terms: any[]): FlashcardConfigTerm[] => {
+  if (!Array.isArray(terms)) return [];
+  return terms
+    .map((term, index) => {
+      if (typeof term === "string") {
+        return {
+          id: `term_${index}`,
+          term,
+        };
+      }
+      if (term && typeof term === "object") {
+        return {
+          id: term.id || `term_${index}`,
+          term: term.term || "",
+          definition: term.definition,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean) as FlashcardConfigTerm[];
+};
+
+const applyDefaultsToNodeList = (nodeList: ActivityNode[] = []) =>
+  nodeList.map((node) => applyNodeDefaults(node));
 
 export default function SimpleZapierBuilder({
   onActivityCreated,
   onClose,
   courseId,
   lessonId,
+  title = "",
+  description = "",
+  activityId,
+  initialContent,
 }: SimpleZapierBuilderProps) {
   const [nodes, setNodes] = useState<ActivityNode[]>([]);
   const [connections, setConnections] = useState<
@@ -388,8 +465,12 @@ export default function SimpleZapierBuilder({
   >([]);
   const [showContextSelector, setShowContextSelector] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [workflowTitle, setWorkflowTitle] = useState("");
-  const [workflowDescription, setWorkflowDescription] = useState("");
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState<
+    string | null
+  >(null);
+  // Use props for title/description instead of internal state
+  const workflowTitle = title || "";
+  const workflowDescription = description || "";
   const [toolMode, setToolMode] = useState<"select">("select");
   const [activeTab, setActiveTab] = useState<"nodes" | "settings">("nodes");
   const [showPreview, setShowPreview] = useState(false);
@@ -398,6 +479,23 @@ export default function SimpleZapierBuilder({
   const [autoSaveKey, setAutoSaveKey] = useState<string | null>(null);
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [generatingFlashcardsNodeId, setGeneratingFlashcardsNodeId] = useState<
+    string | null
+  >(null);
+  const [flashcardGenerationError, setFlashcardGenerationError] = useState<
+    string | null
+  >(null);
+  const [flashcardGenerationErrorNodeId, setFlashcardGenerationErrorNodeId] =
+    useState<string | null>(null);
+  useEffect(() => {
+    setFlashcardGenerationError(null);
+    setFlashcardGenerationErrorNodeId(null);
+  }, [selectedNode?.id]);
+
+  // Modal states for text editing
+  const [contextModalOpen, setContextModalOpen] = useState(false);
+  const [promptsModalOpen, setPromptsModalOpen] = useState(false);
+
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [canvasSize, setCanvasSize] = useState({ width: 2000, height: 1500 });
   const [isPanning, setIsPanning] = useState(false);
@@ -434,70 +532,159 @@ export default function SimpleZapierBuilder({
   const canvasRef = useRef<HTMLDivElement>(null);
   const nodeIdCounter = useRef(0);
   const connectionIdCounter = useRef(0);
+  const autoSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const isGeneratingQuestionsRef = useRef<Set<string>>(new Set());
 
-  // Auto-save functionality
-  const autoSave = () => {
-    setIsAutoSaving(true);
-    try {
-      const activityData = {
-        title: workflowTitle,
-        description: workflowDescription,
-        nodes,
-        connections,
-        courseId,
-        lastSaved: new Date().toISOString(),
-      };
+  // Debounced auto-save functionality
+  const autoSave = async () => {
+    if (!courseId) return;
 
-      const saveKey = autoSaveKey || `draft_${Date.now()}`;
-      localStorage.setItem(
-        `activity_draft_${saveKey}`,
-        JSON.stringify(activityData)
-      );
-      setAutoSaveKey(saveKey);
-      console.log("Auto-saved activity draft:", saveKey, activityData);
-    } catch (error) {
-      console.error("Auto-save failed:", error);
-    } finally {
-      setTimeout(() => setIsAutoSaving(false), 1000);
+    // IMPORTANT: Don't auto-save if we're currently generating questions
+    // This prevents database saves, EARL calls, and notifications during question generation
+    if (isGeneratingQuestionsRef.current.size > 0) {
+      console.log("⏸️ Auto-save skipped: questions are being generated");
+      return;
     }
+
+    // Clear existing timeout
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+
+    // Debounce auto-save by 2 seconds
+    autoSaveTimeoutRef.current = setTimeout(async () => {
+      // Double-check we're not generating questions before saving
+      if (isGeneratingQuestionsRef.current.size > 0) {
+        console.log("⏸️ Auto-save skipped: questions are being generated");
+        return;
+      }
+
+      if (isAutoSaving) return; // Prevent concurrent saves
+
+      setIsAutoSaving(true);
+      try {
+        const activityData = {
+          title: workflowTitle,
+          description: workflowDescription,
+          nodes,
+          connections,
+          courseId,
+          activityId,
+          context_sources: selectedContextSources,
+          lastSaved: new Date().toISOString(),
+        };
+
+        // Use consistent key based on activityId or courseId
+        const saveKey = activityId || autoSaveKey || `draft_${courseId}`;
+        const draftKey = `activity_draft_${saveKey}`;
+
+        localStorage.setItem(draftKey, JSON.stringify(activityData));
+        setAutoSaveKey(saveKey);
+
+        // If we have an activityId, also save to database
+        if (activityId && courseId) {
+          try {
+            const content = {
+              nodes: nodes.map((node) => ({
+                id: node.id,
+                type: node.type,
+                title: node.title,
+                description: node.description,
+                position: node.position,
+                config: node.config || {},
+              })),
+              connections: connections.map((conn) => ({
+                id: conn.id,
+                from: conn.from,
+                to: conn.to,
+              })),
+              workflow_type: "enhanced",
+              context_sources: selectedContextSources,
+            };
+
+            const response = await fetch("/api/activities", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                id: activityId,
+                course_id: courseId,
+                title: workflowTitle,
+                description: workflowDescription,
+                content: content,
+                activity_type: "interactive",
+                is_adaptive: true,
+              }),
+            });
+
+            if (!response.ok) {
+              console.error(
+                "Auto-save to database failed:",
+                await response.text()
+              );
+            }
+          } catch (error) {
+            console.error("Error auto-saving to database:", error);
+          }
+        }
+      } catch (error) {
+        console.error("Auto-save failed:", error);
+      } finally {
+        setTimeout(() => setIsAutoSaving(false), 1000);
+      }
+    }, 2000); // 2 second debounce
   };
 
-  // Load draft on component mount
+  // Load draft on component mount (only if no initialContent provided)
   useEffect(() => {
-    const savedDrafts = Object.keys(localStorage).filter((key) =>
-      key.startsWith("activity_draft_")
-    );
-    if (savedDrafts.length > 0) {
-      const latestDraft = savedDrafts[savedDrafts.length - 1];
-      const draftData = localStorage.getItem(latestDraft);
+    if (initialContent) {
+      // initialContent will be loaded by the other useEffect
+      return;
+    }
+
+    // Try to load draft for this specific activity/course
+    const draftKey = activityId
+      ? `activity_draft_${activityId}`
+      : courseId
+      ? `activity_draft_draft_${courseId}`
+      : null;
+
+    if (draftKey) {
+      const draftData = localStorage.getItem(draftKey);
       if (draftData) {
         try {
           const parsed = JSON.parse(draftData);
-          setWorkflowTitle(parsed.title || "");
-          setWorkflowDescription(parsed.description || "");
-          setNodes(parsed.nodes || []);
-          setConnections(parsed.connections || []);
-          setAutoSaveKey(latestDraft.replace("activity_draft_", ""));
-          console.log("Loaded draft:", latestDraft, parsed);
+          // Only load if we don't have nodes already
+          if (nodes.length === 0 && parsed.nodes && parsed.nodes.length > 0) {
+            setNodes(applyDefaultsToNodeList(parsed.nodes || []));
+            setConnections(parsed.connections || []);
+            if (parsed.context_sources) {
+              setSelectedContextSources(parsed.context_sources);
+            }
+            setAutoSaveKey(activityId || courseId || "");
+            console.log("Loaded draft:", draftKey, parsed);
+          }
         } catch (error) {
           console.error("Error loading draft:", error);
         }
       }
     }
-  }, []);
+  }, [activityId, courseId, initialContent]);
 
-  // Debug selectedNode changes
+  // Cleanup timeout on unmount
   useEffect(() => {
-    console.log("selectedNode changed:", selectedNode);
-  }, [selectedNode]);
+    return () => {
+      if (autoSaveTimeoutRef.current) {
+        clearTimeout(autoSaveTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Save state to history
   const saveToHistory = () => {
     const newState = {
       nodes: [...nodes],
       connections: [...connections],
-      workflowTitle,
-      workflowDescription,
+      // Note: workflowTitle and workflowDescription come from props, not state
     };
 
     const newHistory = history.slice(0, historyIndex + 1);
@@ -517,10 +704,9 @@ export default function SimpleZapierBuilder({
   const undo = () => {
     if (historyIndex > 0) {
       const prevState = history[historyIndex - 1];
-      setNodes(prevState.nodes);
+      setNodes(applyDefaultsToNodeList(prevState.nodes || []));
       setConnections(prevState.connections);
-      setWorkflowTitle(prevState.workflowTitle);
-      setWorkflowDescription(prevState.workflowDescription);
+      // Note: workflowTitle and workflowDescription come from props, not state
       setSelectedNode(null);
       setHistoryIndex(historyIndex - 1);
       console.log("Undo to state:", historyIndex - 1);
@@ -531,10 +717,9 @@ export default function SimpleZapierBuilder({
   const redo = () => {
     if (historyIndex < history.length - 1) {
       const nextState = history[historyIndex + 1];
-      setNodes(nextState.nodes);
+      setNodes(applyDefaultsToNodeList(nextState.nodes || []));
       setConnections(nextState.connections);
-      setWorkflowTitle(nextState.workflowTitle);
-      setWorkflowDescription(nextState.workflowDescription);
+      // Note: workflowTitle and workflowDescription come from props, not state
       setSelectedNode(null);
       setHistoryIndex(historyIndex + 1);
       console.log("Redo to state:", historyIndex + 1);
@@ -799,9 +984,22 @@ export default function SimpleZapierBuilder({
   const getNextNodeId = () => `node_${++nodeIdCounter.current}`;
   const getNextConnectionId = () => `conn_${++connectionIdCounter.current}`;
 
-  // Auto-add start and end nodes
+  // Load initial content if provided
   useEffect(() => {
-    if (nodes.length === 0) {
+    if (
+      initialContent &&
+      initialContent.nodes &&
+      initialContent.nodes.length > 0
+    ) {
+      // Load saved content
+      setNodes(applyDefaultsToNodeList(initialContent.nodes || []));
+      setConnections(initialContent.connections || []);
+      if (initialContent.context_sources) {
+        setSelectedContextSources(initialContent.context_sources);
+      }
+      console.log("Loaded initial content:", initialContent);
+    } else if (nodes.length === 0 && !initialContent) {
+      // Only auto-add start/end nodes if no initial content and no existing nodes
       const startNode: ActivityNode = {
         id: getNextNodeId(),
         type: "start",
@@ -824,9 +1022,9 @@ export default function SimpleZapierBuilder({
         isSelected: false,
         isDragging: false,
       };
-      setNodes([startNode, endNode]);
+      setNodes(applyDefaultsToNodeList([startNode, endNode]));
     }
-  }, []);
+  }, [initialContent]);
 
   const addNode = (nodeType: any, position: { x: number; y: number }) => {
     const newNode: ActivityNode = {
@@ -835,7 +1033,7 @@ export default function SimpleZapierBuilder({
       title: nodeType.name,
       description: nodeType.description,
       position,
-      config: {},
+      config: getDefaultConfigForNode(nodeType.id),
       connections: [],
       isSelected: false,
       isDragging: false,
@@ -861,37 +1059,156 @@ export default function SimpleZapierBuilder({
     autoSave();
   };
 
-  const updateNodeConfig = (nodeId: string, config: any) => {
-    console.log("Updating node config:", nodeId, config);
-    console.log("Current nodes before update:", nodes);
-
+  const updateNodeConfig = (
+    nodeId: string,
+    config: any,
+    skipAutoSave: boolean = false
+  ) => {
     const updatedNodes = nodes.map((node) => {
       if (node.id === nodeId) {
-        const updatedNode = {
+        return {
           ...node,
           config: { ...node.config, ...config },
         };
-        console.log("Updated node:", updatedNode);
-        return updatedNode;
       }
       return node;
     });
 
-    console.log("Updated nodes:", updatedNodes);
     setNodes(updatedNodes);
 
     // Update selectedNode if it's the same node
     if (selectedNode && selectedNode.id === nodeId) {
       const updatedSelectedNode = updatedNodes.find((n) => n.id === nodeId);
       if (updatedSelectedNode) {
-        console.log("Updating selectedNode:", updatedSelectedNode);
         setSelectedNode(updatedSelectedNode);
       }
     }
 
-    // Save to history and auto-save
+    // Save to history and auto-save (debounced)
+    // IMPORTANT: Skip auto-save when generating questions to prevent database saves, EARL, and notifications
     saveToHistory();
-    setTimeout(() => autoSave(), 100);
+    if (!skipAutoSave) {
+      autoSave();
+    }
+  };
+
+  const updateFlashcardTerms = (
+    nodeId: string,
+    updater: (terms: FlashcardConfigTerm[]) => FlashcardConfigTerm[]
+  ) => {
+    const node = nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    const currentTerms = normalizeFlashcardTerms(
+      node.config?.flashcard_terms || []
+    );
+    const updatedTerms = updater(currentTerms);
+    updateNodeConfig(nodeId, {
+      flashcard_terms: updatedTerms,
+      num_terms: updatedTerms.length || node.config?.num_terms || 10,
+    });
+  };
+
+  const handleAddFlashcardTerm = (nodeId: string) => {
+    updateFlashcardTerms(nodeId, (terms) => [
+      ...terms,
+      { id: generateUUID(), term: "" },
+    ]);
+  };
+
+  const handleRemoveFlashcardTerm = (nodeId: string, index: number) => {
+    updateFlashcardTerms(nodeId, (terms) =>
+      terms.filter((_, termIndex) => termIndex !== index)
+    );
+  };
+
+  const handleFlashcardTermChange = (
+    nodeId: string,
+    index: number,
+    value: string
+  ) => {
+    updateFlashcardTerms(nodeId, (terms) =>
+      terms.map((term, termIndex) =>
+        termIndex === index ? { ...term, term: value } : term
+      )
+    );
+  };
+
+  const buildFlashcardContext = (node: ActivityNode) => {
+    let contextText = node.config?.context || "";
+    if (selectedContextSources.length > 0) {
+      const contextParts = selectedContextSources.map((source) => {
+        if (source.type === "pdf") {
+          return `Document: ${source.title}\n${
+            source.summary || ""
+          }\nKey Points: ${(source.key_points || []).join(", ")}`;
+        }
+        if (source.type === "youtube") {
+          return `Video: ${source.title}\n${
+            source.summary || ""
+          }\nKey Concepts: ${(source.key_concepts || []).join(", ")}`;
+        }
+        return "";
+      });
+      contextText = `${contextParts.join("\n\n")}\n\n${contextText}`.trim();
+    }
+    return contextText;
+  };
+
+  const handleGenerateFlashcards = async (node: ActivityNode) => {
+    setFlashcardGenerationError(null);
+    setFlashcardGenerationErrorNodeId(null);
+    if (!node) return;
+    if (generatingFlashcardsNodeId === node.id) return;
+
+    setGeneratingFlashcardsNodeId(node.id);
+    try {
+      const contextText = buildFlashcardContext(node);
+      const response = await fetch("/api/ai/generate-flashcards", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          context: contextText,
+          num_terms: node.config?.num_terms || 10,
+          node_id: node.id,
+          course_id: courseId,
+          activity_id: activityId,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          "Unable to generate flashcards. Please adjust the context and try again."
+        );
+      }
+
+      const data = await response.json();
+      const terms = (data.terms || []).map(
+        (term: string, index: number): FlashcardConfigTerm => ({
+          id: `${node.id}-generated-${Date.now()}-${index}`,
+          term,
+        })
+      );
+
+      if (terms.length === 0) {
+        throw new Error("No flashcards were generated. Try updating the context.");
+      }
+
+      updateNodeConfig(node.id, {
+        flashcard_terms: terms,
+        num_terms: terms.length,
+        flashcards_generated_at: new Date().toISOString(),
+      });
+    } catch (error: unknown) {
+      console.error("Error generating flashcards in builder:", error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Failed to generate flashcards. Please try again.";
+      setFlashcardGenerationError(message);
+      setFlashcardGenerationErrorNodeId(node.id);
+    } finally {
+      setGeneratingFlashcardsNodeId(null);
+    }
   };
 
   const deleteNode = (nodeId: string) => {
@@ -1074,7 +1391,7 @@ export default function SimpleZapierBuilder({
       const fromNode = nodes.find((n) => n.id === connectionFromNode);
 
       // Regular single node creation
-      const newNode = {
+      const newNode = applyNodeDefaults({
         id: getNextNodeId(),
         type: nodeType.id,
         title: nodeType.name,
@@ -1088,7 +1405,7 @@ export default function SimpleZapierBuilder({
         isSelected: false,
         isDragging: false,
         color: nodeType.color,
-      };
+      });
 
       setNodes([...nodes, newNode]);
 
@@ -1109,7 +1426,7 @@ export default function SimpleZapierBuilder({
       saveToHistory();
     } else {
       // No connection from node, just add the node
-      const newNode = {
+      const newNode = applyNodeDefaults({
         id: getNextNodeId(),
         type: nodeType.id,
         title: nodeType.name,
@@ -1120,7 +1437,7 @@ export default function SimpleZapierBuilder({
         isSelected: false,
         isDragging: false,
         color: nodeType.color,
-      };
+      });
 
       setNodes([...nodes, newNode]);
       saveToHistory();
@@ -1216,7 +1533,11 @@ export default function SimpleZapierBuilder({
           alert(`Please add a YouTube URL for the video node "${node.title}"`);
           return false;
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(`Please set points for the video node "${node.title}"`);
           return false;
         }
@@ -1225,8 +1546,21 @@ export default function SimpleZapierBuilder({
           alert(`Please add a title for the PDF node "${node.title}"`);
           return false;
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(`Please set points for the PDF node "${node.title}"`);
+          return false;
+        }
+      } else if (node.type === "pdf" && node.config?.upload_enabled) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
+          alert(`Please set points for the Document Upload node "${node.title}"`);
           return false;
         }
       } else if (node.type === "ai_chat") {
@@ -1234,7 +1568,11 @@ export default function SimpleZapierBuilder({
           alert(`Please add a prompt for the AI Chat node "${node.title}"`);
           return false;
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(`Please set points for the AI Chat node "${node.title}"`);
           return false;
         }
@@ -1256,18 +1594,26 @@ export default function SimpleZapierBuilder({
             return false;
           }
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(`Please set points for the quiz node "${node.title}"`);
           return false;
         }
       } else if (node.type === "custom") {
-        if (!node.config.instructions?.trim()) {
+        if (!node.config.agentic_requirements?.trim()) {
           alert(
-            `Please add instructions for the custom activity node "${node.title}"`
+            `Please add agentic requirements for the custom activity node "${node.title}"`
           );
           return false;
         }
-        if (!node.config.points || node.config.points <= 0) {
+        if (
+          node.config.points === undefined ||
+          node.config.points === null ||
+          node.config.points <= 0
+        ) {
           alert(
             `Please set points for the custom activity node "${node.title}"`
           );
@@ -1289,22 +1635,42 @@ export default function SimpleZapierBuilder({
         return;
       }
 
-      const activityId = generateUUID();
+      // Use existing activityId if provided, otherwise generate new one
+      const finalActivityId = activityId || generateUUID();
+      const isUpdate = !!activityId;
+
       // Check for enhanced features
       const hasAIChatNodes = nodes.some((n) => n.type === "ai_chat");
       const hasAIBranching = nodes.some(
         (n) => n.type === "ai_chat" && n.config?.enable_branching
       );
-      const hasUploadNodes = nodes.some((n) => n.type === "pdf");
+      const hasUploadNodes = nodes.some((n) => n.type === "pdf" && n.config?.upload_enabled);
       const hasVideoNodes = nodes.some((n) => n.type === "video");
 
+      // Calculate total points from nodes (sum of all node points)
+      const totalPoints = nodes.reduce((sum, node) => {
+        const nodePoints = node.config?.points;
+        return sum + (nodePoints && nodePoints > 0 ? nodePoints : 0);
+      }, 0);
+
+      // Calculate total estimated duration from nodes (skip duration for video nodes)
+      const totalDuration = nodes.reduce((sum, node) => {
+        if (node.type === "video") {
+          // Video duration is calculated from the video itself, not config
+          return sum;
+        }
+        const nodeDuration =
+          node.config?.estimated_time || node.config?.estimated_duration;
+        return sum + (nodeDuration && nodeDuration > 0 ? nodeDuration : 0);
+      }, 0);
+
       const activity = {
-        id: activityId,
+        id: finalActivityId,
         type: "enhanced_workflow",
-        title: workflowTitle,
+        title: workflowTitle || "Custom Activity",
         description:
           workflowDescription ||
-          "A custom learning activity created with the simple builder",
+          "A custom learning activity created with the enhanced builder",
         content: {
           nodes: nodes.map((node) => ({
             id: node.id,
@@ -1342,6 +1708,13 @@ export default function SimpleZapierBuilder({
                 max_size_mb: 10,
                 google_cloud_upload: true,
               }),
+              // Add auto-generated questions for video nodes
+              ...(node.type === "video" && {
+                auto_add_questions: node.config?.auto_add_questions || false,
+                auto_questions: node.config?.auto_questions || [],
+                question_timestamps: node.config?.question_timestamps || [],
+                key_concepts: node.config?.key_concepts || [],
+              }),
             },
           })),
           connections,
@@ -1367,8 +1740,9 @@ export default function SimpleZapierBuilder({
               }
             : null,
         },
-        points: Math.max(50, nodes.length * 15),
-        estimated_duration: Math.max(15, nodes.length * 5),
+        points: totalPoints > 0 ? totalPoints : Math.max(50, nodes.length * 15),
+        estimated_duration:
+          totalDuration > 0 ? totalDuration : Math.max(15, nodes.length * 5),
         difficulty_level: Math.min(
           5,
           Math.max(1, Math.floor(nodes.length / 2))
@@ -1383,146 +1757,124 @@ export default function SimpleZapierBuilder({
         performance_tracking: hasAIBranching || hasAIChatNodes,
       };
 
-      // Create shareable URL
-      const shareUrl = `${window.location.origin}/learn/activities/${activityId}`;
-
-      // Save activity (in a real app, this would save to database)
-      const activityKey = `activity_${activityId}`;
-      localStorage.setItem(activityKey, JSON.stringify(activity));
-      setSavedActivityId(activityId);
-      console.log("Activity saved with key:", activityKey);
-      console.log("Activity data:", activity);
-
-      // Also save to a more accessible key for testing
-      localStorage.setItem(`test_activity`, JSON.stringify(activity));
-      console.log("Also saved as test_activity for debugging");
-
-      // Show success with URL
-      alert(
-        `Activity created successfully!\n\nShare this URL with students:\n${shareUrl}\n\nActivity ID: ${activityId}\n\nYou can now preview the activity or close this builder.`
-      );
-
-      // Save to database
-      console.log(
-        "Saving activity to database - courseId:",
-        courseId,
-        "lessonId:",
-        lessonId
-      );
-
-      if (courseId && lessonId) {
-        try {
-          const response = await fetch("/api/activities", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              title: activity.title,
-              description: activity.description,
-              content: activity.content,
-              lesson_id: lessonId,
-              course_id: courseId,
-              points: activity.points || 10,
-              estimated_duration: activity.estimated_duration || 10,
-              activity_type: "quiz",
-              order_index: 0,
-            }),
-          });
-
-          const result = await response.json();
-
-          if (response.ok && result.success) {
-            console.log("Activity saved to database:", result.activity);
-            alert(
-              `Activity saved to database successfully!\n\nActivity ID: ${result.activity.id}\nTitle: ${result.activity.title}\nCheck the lesson editor to see the activity.`
-            );
-          } else {
-            console.error("Failed to save activity to database:", result);
-            alert(
-              `Error saving to database: ${result.error || "Unknown error"}`
-            );
-
-            // Fallback to localStorage
-            console.log("Falling back to localStorage...");
-            const savedLessons = JSON.parse(
-              localStorage.getItem("lessons") || "[]"
-            );
-            const lessonIndex = savedLessons.findIndex(
-              (l: any) => l.id === lessonId
-            );
-
-            if (lessonIndex !== -1) {
-              savedLessons[lessonIndex].activities =
-                savedLessons[lessonIndex].activities || [];
-              savedLessons[lessonIndex].activities.push({
-                id: activityId,
-                type: "simple_workflow",
-                title: activity.title,
-                description: activity.description,
-                duration: activity.estimated_duration || 10,
-                points: activity.points || 10,
-                order: savedLessons[lessonIndex].activities.length,
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              });
-              localStorage.setItem("lessons", JSON.stringify(savedLessons));
-              alert("Activity saved to localStorage as fallback.");
-            }
-          }
-        } catch (error) {
-          console.error("Error saving activity to database:", error);
-          alert(
-            `Error saving to database: ${
-              error instanceof Error ? error.message : "Unknown error"
-            }`
-          );
-
-          // Fallback to localStorage
-          console.log("Falling back to localStorage...");
-          const savedLessons = JSON.parse(
-            localStorage.getItem("lessons") || "[]"
-          );
-          const lessonIndex = savedLessons.findIndex(
-            (l: any) => l.id === lessonId
-          );
-
-          if (lessonIndex !== -1) {
-            savedLessons[lessonIndex].activities =
-              savedLessons[lessonIndex].activities || [];
-            savedLessons[lessonIndex].activities.push({
-              id: activityId,
-              type: "simple_workflow",
-              title: activity.title,
-              description: activity.description,
-              duration: activity.estimated_duration || 10,
-              points: activity.points || 10,
-              order: savedLessons[lessonIndex].activities.length,
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            });
-            localStorage.setItem("lessons", JSON.stringify(savedLessons));
-            alert("Activity saved to localStorage as fallback.");
-          }
-        }
-      } else {
-        console.log("Missing courseId or lessonId:", { courseId, lessonId });
-        alert("Error: Missing course or lesson information");
+      // Validate required fields
+      if (!workflowTitle?.trim()) {
+        alert("Please enter a title for your activity");
+        setIsGenerating(false);
+        return;
       }
 
-      onActivityCreated(activity);
+      if (!courseId) {
+        alert(
+          "Error: Missing course information. Please ensure you're creating the activity from within a course."
+        );
+        setIsGenerating(false);
+        return;
+      }
 
-      // Force refresh the lesson editor by triggering a custom event
-      window.dispatchEvent(
-        new CustomEvent("activitySaved", {
-          detail: {
-            activityId,
-            lessonId,
-            courseId,
-            activity,
-          },
-        })
+      // Save to database
+      // IMPORTANT: This is where the activity is saved to the database.
+      // The /api/activities route will:
+      // 1. Save the activity to the database
+      // 2. Trigger EARL analysis (which generates captivating questions)
+      // 3. Create notifications for enrolled students
+      // This is the ONLY place where database saves, EARL, and notifications happen.
+      // Question generation (when toggling "generate questions") does NOT trigger any of this.
+      console.log(
+        `Saving activity to database - ${isUpdate ? "UPDATE" : "CREATE"}`,
+        { courseId, lessonId, activityId: finalActivityId }
       );
+
+      try {
+        const url = "/api/activities";
+        const method = isUpdate ? "PUT" : "POST";
+
+        const requestBody: any = {
+          title: activity.title,
+          description: activity.description,
+          content: activity.content,
+          course_id: courseId,
+          lesson_id: lessonId || null,
+          points: activity.points,
+          estimated_duration: activity.estimated_duration,
+          activity_type: "interactive",
+          order_index: 0,
+          is_adaptive: true,
+        };
+
+        // Add id for updates
+        if (isUpdate) {
+          requestBody.id = finalActivityId;
+        }
+
+        const response = await fetch(url, {
+          method,
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(requestBody),
+        });
+
+        const result = await response.json();
+
+        if (response.ok && result.success) {
+          console.log("Activity saved to database:", result.activity);
+
+          // Update activityId if it was a new activity
+          const savedActivityId = result.activity?.id || finalActivityId;
+
+          // Questions should already be generated when toggle was clicked
+          // Just save the current state (which includes any generated questions)
+
+          // Save to localStorage as backup
+          const activityKey = `activity_${savedActivityId}`;
+          localStorage.setItem(activityKey, JSON.stringify(activity));
+          setSavedActivityId(savedActivityId);
+
+          // Show success message
+          const successMessage = isUpdate
+            ? `Activity updated successfully!\n\nActivity ID: ${savedActivityId}\nTitle: ${result.activity.title}`
+            : `Activity created successfully!\n\nActivity ID: ${savedActivityId}\nTitle: ${result.activity.title}\n\nCheck the lesson editor to see the activity.`;
+
+          alert(successMessage);
+
+          // Call the callback with the saved activity
+          const savedActivity = {
+            ...activity,
+            id: savedActivityId,
+            ...result.activity,
+          };
+          onActivityCreated(savedActivity);
+
+          // Force refresh the lesson editor by triggering a custom event
+          window.dispatchEvent(
+            new CustomEvent("activitySaved", {
+              detail: {
+                activityId: savedActivityId,
+                lessonId,
+                courseId,
+                activity: savedActivity,
+              },
+            })
+          );
+        } else {
+          console.error("Failed to save activity to database:", result);
+          const errorMessage =
+            result.error || result.details || "Unknown error";
+          alert(
+            `Error saving to database: ${errorMessage}\n\nPlease check the console for more details.`
+          );
+          throw new Error(errorMessage);
+        }
+      } catch (error) {
+        console.error("Error saving activity to database:", error);
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        alert(
+          `Error saving to database: ${errorMessage}\n\nPlease check your connection and try again.`
+        );
+        throw error;
+      }
     } catch (error) {
       console.error("Error generating activity:", error);
       alert("Error creating activity. Please try again.");
@@ -1998,6 +2350,12 @@ export default function SimpleZapierBuilder({
     }
 
     const nodeType = getNodeType(selectedNode.type);
+    const normalizedReviewFlashcards =
+      selectedNode.type === "review"
+        ? normalizeFlashcardTerms(selectedNode.config?.flashcard_terms || [])
+        : [];
+    const isGeneratingFlashcardsForSelectedNode =
+      generatingFlashcardsNodeId === selectedNode.id;
     console.log("Node type:", nodeType);
 
     return (
@@ -2064,29 +2422,185 @@ export default function SimpleZapierBuilder({
                   Current value: {selectedNode.config.youtube_url || "empty"}
                 </p>
               </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-700">
-                  Duration (minutes)
-                </Label>
-                <Input
-                  type="number"
-                  value={selectedNode.config.duration || 0}
-                  onChange={(e) =>
-                    updateNodeConfig(selectedNode.id, {
-                      duration: Number(e.target.value),
-                    })
-                  }
-                  className="mt-1"
-                />
-              </div>
-              <div className="flex items-center space-x-2">
-                <Switch
-                  checked={selectedNode.config.autoplay || false}
-                  onCheckedChange={(checked) =>
-                    updateNodeConfig(selectedNode.id, { autoplay: checked })
-                  }
-                />
-                <Label className="text-sm text-gray-600">Auto-play video</Label>
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={selectedNode.config.auto_add_questions || false}
+                    disabled={isGeneratingQuestions === selectedNode.id}
+                    onCheckedChange={async (checked) => {
+                      // IMPORTANT: Skip auto-save when toggling question generation to prevent database saves, EARL, and notifications
+                      updateNodeConfig(
+                        selectedNode.id,
+                        {
+                          auto_add_questions: checked,
+                        },
+                        true
+                      ); // skipAutoSave=true to prevent database save
+
+                      // If enabling, generate questions immediately
+                      // IMPORTANT: This only generates questions and stores them in local state.
+                      // Questions are NOT saved to database, EARL is NOT called, and notifications are NOT created.
+                      // Questions will only be saved when the user clicks "Complete & Get URL" to create the activity.
+                      if (checked && selectedNode.config.youtube_url) {
+                        // Check if questions already exist
+                        if (
+                          selectedNode.config.has_auto_questions &&
+                          selectedNode.config.auto_questions?.length > 0
+                        ) {
+                          console.log(
+                            "✅ Questions already generated for this video"
+                          );
+                          return;
+                        }
+
+                        // IMPORTANT: Set ref BEFORE any async operations to prevent auto-save
+                        console.log(
+                          "🚫 Setting question generation flag to prevent auto-save/EARL"
+                        );
+                        isGeneratingQuestionsRef.current.add(selectedNode.id);
+                        setIsGeneratingQuestions(selectedNode.id);
+
+                        try {
+                          console.log(
+                            "🎬 Generating questions for video:",
+                            selectedNode.config.youtube_url
+                          );
+
+                          const response = await fetch(
+                            "/api/ai/generate-video-questions",
+                            {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({
+                                youtube_url: selectedNode.config.youtube_url,
+                              }),
+                            }
+                          );
+
+                          if (response.ok) {
+                            const data = await response.json();
+
+                            if (
+                              data.success &&
+                              data.questions &&
+                              data.questions.length > 0
+                            ) {
+                              // Update the video node config with questions (local state only, no database save)
+                              // IMPORTANT: skipAutoSave=true prevents auto-save which would trigger database save, EARL, and notifications
+                              updateNodeConfig(
+                                selectedNode.id,
+                                {
+                                  auto_questions: data.questions,
+                                  question_timestamps: data.questions.map(
+                                    (q: any) => q.timestamp
+                                  ),
+                                  key_concepts: data.key_concepts || [],
+                                  has_auto_questions: true,
+                                },
+                                true
+                              ); // skipAutoSave=true to prevent database save
+
+                              console.log(
+                                `✅ Generated ${data.questions.length} questions for video (not saved yet)`
+                              );
+                            } else {
+                              const errorMsg =
+                                data.error ||
+                                "Unable to generate questions. The video may not have captions available.";
+                              alert(
+                                `❌ ${errorMsg}\n\nPlease ensure the video has captions enabled, or try a different video.`
+                              );
+                            }
+                          } else {
+                            const errorData = await response
+                              .json()
+                              .catch(() => ({
+                                error: `HTTP ${response.status}`,
+                              }));
+                            alert(
+                              `❌ Failed to generate questions: ${
+                                errorData.error || "Unknown error"
+                              }`
+                            );
+                          }
+                        } catch (error: any) {
+                          console.error(
+                            "❌ Error generating questions:",
+                            error
+                          );
+                          alert(
+                            `Error generating questions: ${
+                              error?.message || "Unknown error"
+                            }`
+                          );
+                        } finally {
+                          setIsGeneratingQuestions(null);
+                          isGeneratingQuestionsRef.current.delete(
+                            selectedNode.id
+                          );
+                        }
+                      } else if (!checked) {
+                        // If disabling, clear questions from config (local state only)
+                        // IMPORTANT: skipAutoSave=true prevents auto-save which would trigger database save, EARL, and notifications
+                        updateNodeConfig(
+                          selectedNode.id,
+                          {
+                            auto_questions: [],
+                            question_timestamps: [],
+                            key_concepts: [],
+                            has_auto_questions: false,
+                          },
+                          true
+                        ); // skipAutoSave=true to prevent database save
+                      }
+                    }}
+                  />
+                  <Label className="text-sm font-medium text-gray-700">
+                    Automatically add questions
+                  </Label>
+                </div>
+                <p className="text-xs text-gray-500 ml-8">
+                  Analyzes transcript and adds questions at optimal learning
+                  points
+                </p>
+                {isGeneratingQuestions === selectedNode.id && (
+                  <div className="ml-8 mt-2 p-3 bg-yellow-50 dark:bg-yellow-950/20 rounded-md">
+                    <p className="text-xs text-yellow-800 dark:text-yellow-200">
+                      ⏳ Generating questions... This may take a moment.
+                    </p>
+                  </div>
+                )}
+                {selectedNode.config.auto_questions &&
+                  selectedNode.config.auto_questions.length > 0 && (
+                    <div className="ml-8 mt-2 p-3 bg-blue-50 dark:bg-blue-950/20 rounded-md">
+                      <p className="text-xs font-medium text-blue-900 dark:text-blue-100 mb-2">
+                        Generated {selectedNode.config.auto_questions.length}{" "}
+                        questions:
+                      </p>
+                      <div className="space-y-2">
+                        {selectedNode.config.auto_questions
+                          .slice(0, 3)
+                          .map((q: any, idx: number) => (
+                            <div
+                              key={idx}
+                              className="text-xs text-blue-800 dark:text-blue-200"
+                            >
+                              <span className="font-medium">
+                                @{Math.floor((q.timestamp || 0) / 60)}:
+                                {(q.timestamp || 0) % 60}
+                              </span>{" "}
+                              - {q.question}
+                            </div>
+                          ))}
+                        {selectedNode.config.auto_questions.length > 3 && (
+                          <p className="text-xs text-blue-700 dark:text-blue-300">
+                            +{selectedNode.config.auto_questions.length - 3}{" "}
+                            more questions
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )}
               </div>
               <div>
                 <Label className="text-sm font-medium text-gray-700">
@@ -2094,12 +2608,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 5}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2131,12 +2648,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.estimated_time || 5}
+                  value={selectedNode.config.estimated_time ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      estimated_time: Number(e.target.value),
+                      estimated_time: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter reading time"
                   className="mt-1"
                 />
               </div>
@@ -2146,12 +2666,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 5}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2165,6 +2688,137 @@ export default function SimpleZapierBuilder({
               >
                 <Upload className="h-4 w-4 mr-2" />
                 Upload PDF
+              </Button>
+            </div>
+          )}
+
+          {/* PDF/Upload node-specific parameters - merged into pdf node */}
+          {selectedNode.type === "pdf" && selectedNode.config?.upload_enabled && (
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Instructions
+                </Label>
+                <Textarea
+                  value={selectedNode.config.instructions || ""}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      instructions: e.target.value,
+                    })
+                  }
+                  placeholder="Instructions for students viewing uploaded files..."
+                  rows={3}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Accepted File Types
+                </Label>
+                <Input
+                  value={selectedNode.config.accepted_types?.join(", ") || ".pdf, .pptx, .docx, .doc, .jpg, .png"}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      accepted_types: e.target.value.split(",").map(t => t.trim()),
+                    })
+                  }
+                  placeholder=".pdf, .pptx, .docx"
+                  className="mt-1"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Comma-separated list of file extensions
+                </p>
+              </div>
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Max File Size (MB)
+                </Label>
+                <Input
+                  type="number"
+                  value={selectedNode.config.max_size_mb ?? 10}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      max_size_mb: e.target.value ? Number(e.target.value) : 10,
+                    })
+                  }
+                  placeholder="10"
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Points for Completion
+                </Label>
+                <Input
+                  type="number"
+                  value={selectedNode.config.points ?? ""}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
+                    })
+                  }
+                  placeholder="Enter points"
+                  className="mt-1"
+                />
+              </div>
+              <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-md">
+                <p className="text-xs text-blue-800 dark:text-blue-200">
+                  💡 Upload files using the button below. Files will be displayed to students in the activity player.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                className="w-full"
+                onClick={async () => {
+                  if (!activityId || !selectedNode.id) {
+                    alert("Please save the activity first before uploading files");
+                    return;
+                  }
+
+                  const input = document.createElement("input");
+                  input.type = "file";
+                  input.accept = selectedNode.config.accepted_types?.join(",") || ".pdf,.pptx,.docx,.doc,.jpg,.png";
+                  input.multiple = true;
+
+                  input.onchange = async (e: any) => {
+                    const files = Array.from(e.target.files || []);
+                    if (files.length === 0) return;
+
+                    for (const file of files) {
+                      const formData = new FormData();
+                      formData.append("file", file);
+                      formData.append("activityId", activityId);
+                      formData.append("nodeId", selectedNode.id);
+                      formData.append("extractText", "true");
+
+                      try {
+                        const response = await fetch("/api/upload/google-cloud", {
+                          method: "POST",
+                          body: formData,
+                        });
+
+                        if (response.ok) {
+                          const data = await response.json();
+                          console.log("File uploaded:", data);
+                          alert(`File "${file.name}" uploaded successfully!`);
+                        } else {
+                          const error = await response.json();
+                          alert(`Failed to upload "${file.name}": ${error.error}`);
+                        }
+                      } catch (error: any) {
+                        console.error("Upload error:", error);
+                        alert(`Error uploading "${file.name}": ${error.message}`);
+                      }
+                    }
+                  };
+
+                  input.click();
+                }}
+              >
+                <Upload className="h-4 w-4 mr-2" />
+                Upload Files
               </Button>
             </div>
           )}
@@ -2198,12 +2852,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.max_turns || 10}
+                  value={selectedNode.config.max_turns ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      max_turns: Number(e.target.value),
+                      max_turns: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter max turns"
                   className="mt-1"
                 />
               </div>
@@ -2213,12 +2870,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 10}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2307,12 +2967,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.time_limit || 0}
+                  value={selectedNode.config.time_limit ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      time_limit: Number(e.target.value),
+                      time_limit: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter time limit"
                   className="mt-1"
                 />
               </div>
@@ -2322,12 +2985,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.passing_score || 70}
+                  value={selectedNode.config.passing_score ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      passing_score: Number(e.target.value),
+                      passing_score: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter passing score"
                   min="0"
                   max="100"
                   className="mt-1"
@@ -2339,12 +3005,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 10}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2379,12 +3048,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.estimated_duration || 15}
+                  value={selectedNode.config.estimated_duration ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      estimated_duration: Number(e.target.value),
+                      estimated_duration: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter duration"
                   className="mt-1"
                 />
               </div>
@@ -2394,12 +3066,15 @@ export default function SimpleZapierBuilder({
                 </Label>
                 <Input
                   type="number"
-                  value={selectedNode.config.points || 15}
+                  value={selectedNode.config.points ?? ""}
                   onChange={(e) =>
                     updateNodeConfig(selectedNode.id, {
-                      points: Number(e.target.value),
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
                     })
                   }
+                  placeholder="Enter points"
                   className="mt-1"
                 />
               </div>
@@ -2535,6 +3210,250 @@ export default function SimpleZapierBuilder({
             </div>
           )}
 
+          {/* Review-specific parameters */}
+          {selectedNode.type === "review" && (
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Review Type
+                </Label>
+                <select
+                  value={selectedNode.config.review_type || "flashcards"}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      review_type: e.target.value,
+                    })
+                  }
+                  className="w-full p-2 border border-gray-300 rounded-md mt-1"
+                >
+                  <option value="flashcards">Flashcards</option>
+                  <option value="teacher_review">Teacher Review</option>
+                </select>
+              </div>
+
+              {selectedNode.config.review_type === "flashcards" && (
+                <div className="space-y-4">
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Context Configuration
+                    </Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full mt-1 justify-start"
+                      onClick={() => setContextModalOpen(true)}
+                    >
+                      <Maximize2 className="h-4 w-4 mr-2" />
+                      {selectedNode.config.context
+                        ? `Edit Context (${selectedNode.config.context.length} chars)`
+                        : "Edit Context"}
+                    </Button>
+                    {selectedNode.config.context && (
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                        {selectedNode.config.context.substring(0, 100)}
+                        {selectedNode.config.context.length > 100 ? "..." : ""}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      Describe the context or let the AI analyze uploaded documents/videos automatically. Supports math notation (x^2, H2O, sqrt(x)).
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Number of Terms
+                    </Label>
+                    <Input
+                      type="number"
+                      value={selectedNode.config.num_terms ?? ""}
+                      onChange={(e) =>
+                        updateNodeConfig(selectedNode.id, {
+                          num_terms:
+                            e.target.value === ""
+                              ? undefined
+                              : Number(e.target.value),
+                        })
+                      }
+                      placeholder="Number of flashcard terms"
+                      min="1"
+                      max="50"
+                      className="mt-1"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      type="button"
+                      className="flex-1"
+                      disabled={isGeneratingFlashcardsForSelectedNode}
+                      onClick={() => handleGenerateFlashcards(selectedNode)}
+                    >
+                      {isGeneratingFlashcardsForSelectedNode ? (
+                        <RefreshCcw className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Sparkles className="h-4 w-4 mr-2" />
+                      )}
+                      {isGeneratingFlashcardsForSelectedNode
+                        ? "Generating..."
+                        : "Generate Cards"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => handleAddFlashcardTerm(selectedNode.id)}
+                    >
+                      <PlusCircle className="h-4 w-4 mr-2" />
+                      Add Term
+                    </Button>
+                  </div>
+                  {flashcardGenerationError &&
+                    flashcardGenerationErrorNodeId === selectedNode.id && (
+                      <p className="text-xs text-red-600">
+                        {flashcardGenerationError}
+                      </p>
+                    )}
+                  <div className="space-y-2">
+                    <Label className="text-sm font-medium text-gray-700">
+                      Flashcard Terms
+                    </Label>
+                    {normalizedReviewFlashcards.length === 0 ? (
+                      <p className="text-sm text-gray-500">
+                        No flashcards yet. Use Generate Cards or Add Term to get
+                        started.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {normalizedReviewFlashcards.map((term, index) => (
+                          <div
+                            key={term.id || `term-${index}`}
+                            className="flex items-center gap-2"
+                          >
+                            <Input
+                              value={term.term}
+                              onChange={(e) =>
+                                handleFlashcardTermChange(
+                                  selectedNode.id,
+                                  index,
+                                  e.target.value
+                                )
+                              }
+                              placeholder={`Term ${index + 1}`}
+                              className="flex-1"
+                            />
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="outline"
+                              onClick={() =>
+                                handleRemoveFlashcardTerm(
+                                  selectedNode.id,
+                                  index
+                                )
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {selectedNode.config.review_type === "teacher_review" && (
+                <div className="space-y-4">
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Context Configuration
+                    </Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full mt-1 justify-start"
+                      onClick={() => setContextModalOpen(true)}
+                    >
+                      <Maximize2 className="h-4 w-4 mr-2" />
+                      {selectedNode.config.context
+                        ? `Edit Context (${selectedNode.config.context.length} chars)`
+                        : "Edit Context"}
+                    </Button>
+                    {selectedNode.config.context && (
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                        {selectedNode.config.context.substring(0, 100)}
+                        {selectedNode.config.context.length > 100 ? "..." : ""}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      Supports math notation (x^2, H2O, sqrt(x)).
+                    </p>
+                  </div>
+                  <div>
+                    <Label className="text-sm font-medium text-gray-700">
+                      Review Prompts
+                    </Label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full mt-1 justify-start"
+                      onClick={() => setPromptsModalOpen(true)}
+                    >
+                      <Maximize2 className="h-4 w-4 mr-2" />
+                      {selectedNode.config.prompts
+                        ? `Edit Prompts (${selectedNode.config.prompts.split('\n').length} prompts)`
+                        : "Edit Prompts"}
+                    </Button>
+                    {selectedNode.config.prompts && (
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                        {selectedNode.config.prompts.split('\n')[0]}
+                        {selectedNode.config.prompts.split('\n').length > 1 ? ` (+${selectedNode.config.prompts.split('\n').length - 1} more)` : ""}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-1">
+                      Enter one prompt per line. Students will complete each prompt. Supports math notation.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Custom Instructions
+                </Label>
+                <Input
+                  value={selectedNode.config.instructions || "Write on your notebook and then here"}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      instructions: e.target.value,
+                    })
+                  }
+                  placeholder="Write on your notebook and then here"
+                  className="mt-1"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Default: "Write on your notebook and then here". You can customize this instruction (e.g., "Write on your notebook and write here. Be sure to show all your steps").
+                </p>
+              </div>
+              <div>
+                <Label className="text-sm font-medium text-gray-700">
+                  Points for Completion
+                </Label>
+                <Input
+                  type="number"
+                  value={selectedNode.config.points ?? ""}
+                  onChange={(e) =>
+                    updateNodeConfig(selectedNode.id, {
+                      points: e.target.value
+                        ? Number(e.target.value)
+                        : undefined,
+                    })
+                  }
+                  placeholder="Enter points"
+                  className="mt-1"
+                />
+              </div>
+            </div>
+          )}
+
           {!nodeType.isRequired && (
             <Button
               variant="destructive"
@@ -2553,9 +3472,13 @@ export default function SimpleZapierBuilder({
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
-      {/* Zapier-style Header */}
+      {/* Zapier-style Header with Back Button */}
       <div className="flex items-center justify-between px-6 py-4 border-b bg-white shadow-sm">
         <div className="flex items-center gap-4">
+          <Button variant="ghost" size="sm" onClick={onClose}>
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back
+          </Button>
           <div className="p-2 bg-gradient-to-r from-orange-500 to-red-500 rounded-lg">
             <Zap className="h-6 w-6 text-white" />
           </div>
@@ -2564,6 +3487,7 @@ export default function SimpleZapierBuilder({
               Activity Builder
             </h2>
             <p className="text-sm text-gray-600">
+              {workflowTitle || "Enhanced Activity Builder"}
               {isAutoSaving && (
                 <span className="ml-2 text-green-600 text-xs inline">
                   Saving...
@@ -2652,14 +3576,7 @@ export default function SimpleZapierBuilder({
 
           {/* Action Buttons */}
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={onClose}
-              className="h-8 px-4 text-sm"
-            >
-              <X className="h-3 w-3 mr-1" />
-              Cancel
-            </Button>
+            {/* Cancel button removed - use Back button instead */}
             <Button
               variant="outline"
               onClick={() => setShowPreviewFlow(true)}
@@ -2712,7 +3629,7 @@ export default function SimpleZapierBuilder({
 
       <div className="flex flex-1">
         {/* Zapier-style Sidebar */}
-        <div className="w-72 border-r bg-white">
+        <div className="w-96 border-r bg-white">
           <Tabs
             value={activeTab}
             onValueChange={(value) =>
@@ -2730,38 +3647,27 @@ export default function SimpleZapierBuilder({
             </TabsList>
 
             <TabsContent value="nodes" className="p-3 space-y-3">
-              {/* Activity Info */}
-              <div className="space-y-2">
-                <div>
-                  <Label className="text-xs font-medium text-gray-600">
+              {/* Activity Info - Title/Description come from props, not editable here */}
+              {workflowTitle && (
+                <div className="p-2 bg-blue-50 dark:bg-blue-950 rounded-md">
+                  <p className="text-xs font-medium text-gray-600 mb-1">
                     Activity Title
-                  </Label>
-                  <Input
-                    value={workflowTitle}
-                    onChange={(e) => {
-                      setWorkflowTitle(e.target.value);
-                      autoSave();
-                    }}
-                    placeholder="Enter activity title..."
-                    className="mt-1 h-8 text-sm"
-                  />
+                  </p>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {workflowTitle}
+                  </p>
+                  {workflowDescription && (
+                    <>
+                      <p className="text-xs font-medium text-gray-600 mt-2 mb-1">
+                        Description
+                      </p>
+                      <p className="text-sm text-gray-700">
+                        {workflowDescription}
+                      </p>
+                    </>
+                  )}
                 </div>
-                <div>
-                  <Label className="text-xs font-medium text-gray-600">
-                    Description
-                  </Label>
-                  <Textarea
-                    value={workflowDescription}
-                    onChange={(e) => {
-                      setWorkflowDescription(e.target.value);
-                      autoSave();
-                    }}
-                    placeholder="Describe this learning activity..."
-                    rows={2}
-                    className="mt-1 text-sm"
-                  />
-                </div>
-              </div>
+              )}
 
               {/* Node Types */}
               <div>
@@ -2982,66 +3888,7 @@ export default function SimpleZapierBuilder({
             </TabsContent>
 
             <TabsContent value="settings" className="p-4">
-              {savedActivityId ? (
-                <div className="space-y-4">
-                  <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                    <h3 className="text-lg font-semibold text-green-800 mb-2">
-                      Activity Created Successfully!
-                    </h3>
-                    <p className="text-green-700 text-sm mb-3">
-                      Your activity has been saved and is ready to share with
-                      students.
-                    </p>
-                    <div className="space-y-2">
-                      <Label className="text-sm font-medium text-green-800">
-                        Share this URL with students:
-                      </Label>
-                      <div className="flex gap-2">
-                        <Input
-                          value={`${window.location.origin}/learn/activities/${savedActivityId}`}
-                          readOnly
-                          className="text-sm"
-                        />
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            navigator.clipboard.writeText(
-                              `${window.location.origin}/learn/activities/${savedActivityId}`
-                            );
-                            alert("URL copied to clipboard!");
-                          }}
-                        >
-                          <Copy className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setShowPreview(true)}
-                      >
-                        <Eye className="h-4 w-4 mr-2" />
-                        Preview Activity
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          window.open(
-                            `${window.location.origin}/learn/activities/${savedActivityId}`,
-                            "_blank"
-                          );
-                        }}
-                      >
-                        <ExternalLink className="h-4 w-4 mr-2" />
-                        Open in New Tab
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : selectedNode ? (
+              {selectedNode ? (
                 renderNodeParameters()
               ) : (
                 <div className="text-center text-gray-500 py-8">
@@ -3477,6 +4324,34 @@ export default function SimpleZapierBuilder({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Text Editor Modals */}
+      {selectedNode && (
+        <>
+          <TextEditorModal
+            open={contextModalOpen}
+            onOpenChange={setContextModalOpen}
+            value={selectedNode.config.context || ""}
+            onChange={(value) =>
+              updateNodeConfig(selectedNode.id, { context: value })
+            }
+            title="Edit Context Configuration"
+            description="Configure context for flashcards or teacher review. Supports math notation (x^2, H2O, sqrt(x))."
+            placeholder="Configure context based on uploaded documents and YouTube videos..."
+          />
+          <TextEditorModal
+            open={promptsModalOpen}
+            onOpenChange={setPromptsModalOpen}
+            value={selectedNode.config.prompts || ""}
+            onChange={(value) =>
+              updateNodeConfig(selectedNode.id, { prompts: value })
+            }
+            title="Edit Review Prompts"
+            description="Enter one prompt per line. Students will complete each prompt. Supports math notation."
+            placeholder="Enter review prompts (one per line). Example: 'Use a semicolon in a sentence'"
+          />
+        </>
       )}
     </div>
   );

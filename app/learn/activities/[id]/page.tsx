@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import SimpleActivityPlayer from "@/components/learning/simple-activity-player";
 import AgenticActivityPlayer from "@/components/learning/agentic-activity-player";
+import EnhancedActivityPlayer from "@/components/learning/enhanced-activity-player";
 import {
   Card,
   CardContent,
@@ -72,10 +73,18 @@ export default function ActivityPage({ params }: { params: { id: string } }) {
   const [timeSpent, setTimeSpent] = useState(0);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [studentName, setStudentName] = useState("");
+  const isLoadingRef = useRef(false);
   const router = useRouter();
 
   const loadActivityFromDatabase = async (activityId: string) => {
+    // Prevent multiple simultaneous loads
+    if (isLoadingRef.current) {
+      console.log("Already loading, skipping...");
+      return;
+    }
+
     try {
+      isLoadingRef.current = true;
       // Check if this is an old format ID (starts with "activity_" followed by numbers)
       const isOldFormat = activityId.match(/^activity_\d+$/);
 
@@ -97,6 +106,8 @@ export default function ActivityPage({ params }: { params: { id: string } }) {
           const activityData = data.activities[0];
           console.log("Loaded activity from database:", activityData);
           setActivity(activityData);
+          setLoading(false);
+          isLoadingRef.current = false;
         } else {
           console.log("Activity not found in database, trying localStorage...");
           loadActivityFromLocalStorage(activityId);
@@ -109,6 +120,8 @@ export default function ActivityPage({ params }: { params: { id: string } }) {
       console.error("Error loading activity from database:", error);
       console.log("Falling back to localStorage...");
       loadActivityFromLocalStorage(activityId);
+    } finally {
+      isLoadingRef.current = false;
     }
   };
 
@@ -137,43 +150,66 @@ export default function ActivityPage({ params }: { params: { id: string } }) {
     );
 
     if (savedActivity) {
-      const activityData = JSON.parse(savedActivity);
-      console.log("Loaded activity from localStorage:", activityData);
-      setActivity(activityData);
-    } else {
-      console.log("Activity not found in localStorage");
-      console.log("Tried keys:", [
-        lookupKey,
-        activityId,
-        `activity_${activityId}`,
-      ]);
+      try {
+        const activityData = JSON.parse(savedActivity);
+        console.log("Loaded activity from localStorage:", activityData);
+        setActivity(activityData);
+        setLoading(false);
+        isLoadingRef.current = false;
+        return;
+      } catch (parseError) {
+        console.error("Error parsing localStorage activity:", parseError);
+      }
+    }
 
-      // Try alternative lookup methods
-      const allActivityKeys = Object.keys(localStorage).filter((key) =>
-        key.startsWith("activity_")
-      );
-      console.log("All activity keys found:", allActivityKeys);
+    // Try alternative lookup methods
+    const allActivityKeys = Object.keys(localStorage).filter((key) =>
+      key.startsWith("activity_")
+    );
+    console.log("All activity keys found:", allActivityKeys);
 
-      // Check if there's a partial match
-      const partialMatch = allActivityKeys.find(
-        (key) =>
-          key.includes(activityId) ||
-          activityId.includes(key.replace("activity_", ""))
-      );
-      if (partialMatch) {
-        console.log("Found partial match:", partialMatch);
-        const partialData = localStorage.getItem(partialMatch);
-        if (partialData) {
+    // Check if there's a partial match
+    const partialMatch = allActivityKeys.find(
+      (key) =>
+        key.includes(activityId) ||
+        activityId.includes(key.replace("activity_", ""))
+    );
+    if (partialMatch) {
+      console.log("Found partial match:", partialMatch);
+      const partialData = localStorage.getItem(partialMatch);
+      if (partialData) {
+        try {
           const activityData = JSON.parse(partialData);
           console.log("Loaded activity from partial match:", activityData);
           setActivity(activityData);
+          setLoading(false);
+          isLoadingRef.current = false;
           return;
+        } catch (parseError) {
+          console.error("Error parsing partial match activity:", parseError);
         }
       }
     }
+
+    // If we get here, activity was not found
+    console.log("Activity not found in localStorage");
+    console.log("Tried keys:", [
+      lookupKey,
+      activityId,
+      `activity_${activityId}`,
+    ]);
+    setLoading(false);
+    isLoadingRef.current = false;
   };
 
   useEffect(() => {
+    // Reset loading state when activity ID changes
+    if (activity?.id && activity.id !== params.id) {
+      setLoading(true);
+      setActivity(null);
+      isLoadingRef.current = false;
+    }
+
     // Check authentication
     const savedStudent = localStorage.getItem("student_session");
     if (savedStudent) {
@@ -185,9 +221,10 @@ export default function ActivityPage({ params }: { params: { id: string } }) {
       setIsAuthenticated(false);
     }
 
-    // Load activity from database
-    loadActivityFromDatabase(params.id);
-    setLoading(false);
+    // Load activity from database only if not already loading and activity not set
+    if (!isLoadingRef.current && !activity) {
+      loadActivityFromDatabase(params.id);
+    }
   }, [params.id]);
 
   const handleActivityComplete = (
@@ -348,6 +385,11 @@ export default function ActivityPage({ params }: { params: { id: string } }) {
     );
   }
 
+  // Check if activity has node-based structure (from Zapier builder)
+  const hasNodes = activity?.content?.nodes && Array.isArray(activity.content.nodes) && activity.content.nodes.length > 0;
+  const isEnhancedWorkflow = activity?.activity_type === "enhanced_workflow" || activity?.type === "enhanced_workflow";
+  
+  // Check if it's an agentic activity
   const isAgentic =
     activity?.activity_type === "custom" ||
     activity?.content?.mode ||
@@ -355,12 +397,28 @@ export default function ActivityPage({ params }: { params: { id: string } }) {
     activity?.content?.steps ||
     activity?.content?.prompts;
 
-  return isAgentic ? (
-    <AgenticActivityPlayer
-      activity={activity}
-      onComplete={handleActivityComplete}
-    />
-  ) : (
+  // Use EnhancedActivityPlayer for node-based activities
+  if (hasNodes || isEnhancedWorkflow) {
+    return (
+      <EnhancedActivityPlayer
+        activity={activity}
+        onComplete={handleActivityComplete}
+      />
+    );
+  }
+
+  // Use AgenticActivityPlayer for agentic activities
+  if (isAgentic) {
+    return (
+      <AgenticActivityPlayer
+        activity={activity}
+        onComplete={handleActivityComplete}
+      />
+    );
+  }
+
+  // Default to SimpleActivityPlayer
+  return (
     <SimpleActivityPlayer
       activity={activity}
       onComplete={handleActivityComplete}

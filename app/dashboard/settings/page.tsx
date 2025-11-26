@@ -23,6 +23,27 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Switch } from "@/components/ui/switch";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import {
   LogOut,
   User,
@@ -31,6 +52,12 @@ import {
   Key,
   Save,
   AlertCircle,
+  Mail,
+  Palette,
+  Download,
+  Trash2,
+  CheckCircle,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { PasswordChangeDialog } from "@/components/auth/password-change-dialog";
@@ -45,6 +72,20 @@ interface UserProfile {
   avatar_url: string;
   created_at: string;
   updated_at: string;
+}
+
+interface NotificationSettings {
+  emailNotifications: boolean;
+  courseUpdates: boolean;
+  assignmentReminders: boolean;
+  gradeNotifications: boolean;
+  systemAnnouncements: boolean;
+}
+
+interface DesignSettings {
+  theme: "light" | "dark" | "system";
+  primaryColor: string;
+  accentColor: string;
 }
 
 export default function SettingsPage() {
@@ -64,8 +105,39 @@ export default function SettingsPage() {
     role: "teacher",
   });
 
+  // Email change state
+  const [newEmail, setNewEmail] = useState("");
+  const [emailDialogOpen, setEmailDialogOpen] = useState(false);
+  const [isChangingEmail, setIsChangingEmail] = useState(false);
+
+  // Password reset state
+  const [passwordResetEmail, setPasswordResetEmail] = useState("");
+  const [passwordResetDialogOpen, setPasswordResetDialogOpen] = useState(false);
+  const [isSendingReset, setIsSendingReset] = useState(false);
+
+  // Notification settings
+  const [notifications, setNotifications] = useState<NotificationSettings>({
+    emailNotifications: true,
+    courseUpdates: true,
+    assignmentReminders: true,
+    gradeNotifications: true,
+    systemAnnouncements: true,
+  });
+
+  // Design settings
+  const [designSettings, setDesignSettings] = useState<DesignSettings>({
+    theme: "system",
+    primaryColor: "violet",
+    accentColor: "fuchsia",
+  });
+
+  // Account deletion
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+
   useEffect(() => {
     loadProfile();
+    loadSettings();
   }, []);
 
   const loadProfile = async () => {
@@ -98,6 +170,35 @@ export default function SettingsPage() {
       setError("Failed to load profile");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const loadSettings = () => {
+    // Load notification settings from localStorage
+    const savedNotifications = localStorage.getItem("notificationSettings");
+    if (savedNotifications) {
+      try {
+        setNotifications(JSON.parse(savedNotifications));
+      } catch (e) {
+        console.error("Error loading notification settings:", e);
+      }
+    }
+
+    // Load design settings from localStorage
+    const savedDesign = localStorage.getItem("designSettings");
+    if (savedDesign) {
+      try {
+        const design = JSON.parse(savedDesign);
+        setDesignSettings(design);
+        // Apply theme
+        if (design.theme === "dark") {
+          document.documentElement.classList.add("dark");
+        } else if (design.theme === "light") {
+          document.documentElement.classList.remove("dark");
+        }
+      } catch (e) {
+        console.error("Error loading design settings:", e);
+      }
     }
   };
 
@@ -137,6 +238,229 @@ export default function SettingsPage() {
       });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleEmailChange = async () => {
+    if (!newEmail || !profile) return;
+
+    setIsChangingEmail(true);
+    setError(null);
+
+    try {
+      const { error } = await supabase.auth.updateUser({
+        email: newEmail,
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Email Change Requested",
+        description:
+          "A confirmation email has been sent to your new email address. Please check your inbox.",
+      });
+
+      setEmailDialogOpen(false);
+      setNewEmail("");
+    } catch (error) {
+      console.error("Error changing email:", error);
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Failed to change email. Please try again."
+      );
+      toast({
+        title: "Error",
+        description: "Failed to change email. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsChangingEmail(false);
+    }
+  };
+
+  const handlePasswordReset = async () => {
+    if (!passwordResetEmail) {
+      setError("Please enter your email address");
+      return;
+    }
+
+    setIsSendingReset(true);
+    setError(null);
+
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        passwordResetEmail,
+        {
+          redirectTo: `${window.location.origin}/auth/reset-password`,
+        }
+      );
+
+      if (error) throw error;
+
+      toast({
+        title: "Password Reset Email Sent",
+        description:
+          "If an account exists with that email, you will receive a password reset link.",
+      });
+
+      setPasswordResetDialogOpen(false);
+      setPasswordResetEmail("");
+    } catch (error) {
+      console.error("Error sending password reset:", error);
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Failed to send password reset email. Please try again."
+      );
+      toast({
+        title: "Error",
+        description: "Failed to send password reset email. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSendingReset(false);
+    }
+  };
+
+  const handleNotificationChange = (key: keyof NotificationSettings) => {
+    const updated = { ...notifications, [key]: !notifications[key] };
+    setNotifications(updated);
+    localStorage.setItem("notificationSettings", JSON.stringify(updated));
+    toast({
+      title: "Settings Saved",
+      description: "Your notification preferences have been updated.",
+    });
+  };
+
+  const handleDesignChange = (key: keyof DesignSettings, value: any) => {
+    const updated = { ...designSettings, [key]: value };
+    setDesignSettings(updated);
+    localStorage.setItem("designSettings", JSON.stringify(updated));
+
+    // Apply theme immediately
+    if (key === "theme") {
+      if (value === "dark") {
+        document.documentElement.classList.add("dark");
+      } else if (value === "light") {
+        document.documentElement.classList.remove("dark");
+      } else {
+        // System theme
+        const prefersDark = window.matchMedia(
+          "(prefers-color-scheme: dark)"
+        ).matches;
+        if (prefersDark) {
+          document.documentElement.classList.add("dark");
+        } else {
+          document.documentElement.classList.remove("dark");
+        }
+      }
+    }
+
+    toast({
+      title: "Settings Saved",
+      description: "Your design preferences have been updated.",
+    });
+  };
+
+  const handleExportData = async () => {
+    if (!profile) return;
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Collect user data
+      const exportData = {
+        profile: {
+          id: profile.id,
+          full_name: profile.full_name,
+          email: profile.email,
+          role: profile.role,
+          school_name: profile.school_name,
+          bio: profile.bio,
+          created_at: profile.created_at,
+        },
+        settings: {
+          notifications,
+          design: designSettings,
+        },
+        exportDate: new Date().toISOString(),
+      };
+
+      // Create and download JSON file
+      const dataStr = JSON.stringify(exportData, null, 2);
+      const dataBlob = new Blob([dataStr], { type: "application/json" });
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `course-studio-data-${new Date().toISOString().split("T")[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast({
+        title: "Data Exported",
+        description: "Your data has been downloaded successfully.",
+      });
+    } catch (error) {
+      console.error("Error exporting data:", error);
+      toast({
+        title: "Error",
+        description: "Failed to export data. Please try again.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== "DELETE") {
+      setError("Please type DELETE to confirm");
+      return;
+    }
+
+    if (!profile) return;
+
+    setIsDeleting(true);
+    setError(null);
+
+    try {
+      // Call API endpoint to delete account
+      const response = await fetch("/api/auth/delete-account", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete account");
+      }
+
+      // Sign out the user
+      await supabase.auth.signOut();
+
+      toast({
+        title: "Account Deleted",
+        description: "Your account has been permanently deleted.",
+      });
+
+      router.push("/");
+    } catch (error) {
+      console.error("Error deleting account:", error);
+      setError(
+        error instanceof Error
+          ? error.message
+          : "Failed to delete account. Please contact support."
+      );
+      toast({
+        title: "Error",
+        description: "Failed to delete account. Please contact support.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -193,7 +517,7 @@ export default function SettingsPage() {
 
         {success && (
           <Alert className="mb-6">
-            <AlertCircle className="h-4 w-4" />
+            <CheckCircle className="h-4 w-4" />
             <AlertDescription>{success}</AlertDescription>
           </Alert>
         )}
@@ -228,15 +552,60 @@ export default function SettingsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    value={profile?.email || ""}
-                    disabled
-                    className="bg-muted"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Email cannot be changed
-                  </p>
+                  <div className="flex gap-2">
+                    <Input
+                      id="email"
+                      value={profile?.email || ""}
+                      disabled
+                      className="bg-muted"
+                    />
+                    <Dialog
+                      open={emailDialogOpen}
+                      onOpenChange={setEmailDialogOpen}
+                    >
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm">
+                          <Mail className="h-4 w-4 mr-2" />
+                          Change
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Change Email Address</DialogTitle>
+                          <DialogDescription>
+                            Enter your new email address. A confirmation email
+                            will be sent to verify the change.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-4 py-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="newEmail">New Email Address</Label>
+                            <Input
+                              id="newEmail"
+                              type="email"
+                              value={newEmail}
+                              onChange={(e) => setNewEmail(e.target.value)}
+                              placeholder="new@example.com"
+                            />
+                          </div>
+                        </div>
+                        <DialogFooter>
+                          <Button
+                            variant="outline"
+                            onClick={() => setEmailDialogOpen(false)}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            onClick={handleEmailChange}
+                            disabled={isChangingEmail || !newEmail}
+                          >
+                            {isChangingEmail ? "Sending..." : "Change Email"}
+                          </Button>
+                        </DialogFooter>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
                 </div>
               </div>
 
@@ -313,14 +682,64 @@ export default function SettingsPage() {
             <CardContent className="space-y-4">
               <div className="space-y-2">
                 <Label>Password</Label>
-                <PasswordChangeDialog>
-                  <Button variant="outline" className="w-full md:w-auto">
-                    <Key className="h-4 w-4 mr-2" />
-                    Change Password
-                  </Button>
-                </PasswordChangeDialog>
+                <div className="flex gap-2">
+                  <PasswordChangeDialog>
+                    <Button variant="outline" className="w-full md:w-auto">
+                      <Key className="h-4 w-4 mr-2" />
+                      Change Password
+                    </Button>
+                  </PasswordChangeDialog>
+                  <Dialog
+                    open={passwordResetDialogOpen}
+                    onOpenChange={setPasswordResetDialogOpen}
+                  >
+                    <DialogTrigger asChild>
+                      <Button variant="outline" className="w-full md:w-auto">
+                        <RefreshCw className="h-4 w-4 mr-2" />
+                        Reset Password
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Reset Password</DialogTitle>
+                        <DialogDescription>
+                          Enter your email address and we'll send you a link to
+                          reset your password.
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="resetEmail">Email Address</Label>
+                          <Input
+                            id="resetEmail"
+                            type="email"
+                            value={passwordResetEmail}
+                            onChange={(e) =>
+                              setPasswordResetEmail(e.target.value)
+                            }
+                            placeholder="your@email.com"
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button
+                          variant="outline"
+                          onClick={() => setPasswordResetDialogOpen(false)}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          onClick={handlePasswordReset}
+                          disabled={isSendingReset || !passwordResetEmail}
+                        >
+                          {isSendingReset ? "Sending..." : "Send Reset Link"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
                 <p className="text-xs text-muted-foreground">
-                  Click to change your password
+                  Change your password or request a password reset email
                 </p>
               </div>
             </CardContent>
@@ -338,20 +757,196 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Email Notifications</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Receive notifications via email
+                  </p>
+                </div>
+                <Switch
+                  checked={notifications.emailNotifications}
+                  onCheckedChange={() =>
+                    handleNotificationChange("emailNotifications")
+                  }
+                />
+              </div>
+              <Separator />
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Course Updates</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Get notified about course changes
+                  </p>
+                </div>
+                <Switch
+                  checked={notifications.courseUpdates}
+                  onCheckedChange={() =>
+                    handleNotificationChange("courseUpdates")
+                  }
+                  disabled={!notifications.emailNotifications}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Assignment Reminders</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Reminders for upcoming assignments
+                  </p>
+                </div>
+                <Switch
+                  checked={notifications.assignmentReminders}
+                  onCheckedChange={() =>
+                    handleNotificationChange("assignmentReminders")
+                  }
+                  disabled={!notifications.emailNotifications}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>Grade Notifications</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Get notified when grades are posted
+                  </p>
+                </div>
+                <Switch
+                  checked={notifications.gradeNotifications}
+                  onCheckedChange={() =>
+                    handleNotificationChange("gradeNotifications")
+                  }
+                  disabled={!notifications.emailNotifications}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <Label>System Announcements</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Important platform updates and announcements
+                  </p>
+                </div>
+                <Switch
+                  checked={notifications.systemAnnouncements}
+                  onCheckedChange={() =>
+                    handleNotificationChange("systemAnnouncements")
+                  }
+                  disabled={!notifications.emailNotifications}
+                />
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Design Customization */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Palette className="h-5 w-5" />
+                Design & Appearance
+              </CardTitle>
+              <CardDescription>
+                Customize the look and feel of the platform
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
               <div className="space-y-2">
-                <p className="text-sm text-muted-foreground">
-                  Notification settings will be available soon.
+                <Label htmlFor="theme">Theme</Label>
+                <Select
+                  value={designSettings.theme}
+                  onValueChange={(value) =>
+                    handleDesignChange("theme", value as "light" | "dark" | "system")
+                  }
+                >
+                  <SelectTrigger id="theme">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="light">Light</SelectItem>
+                    <SelectItem value="dark">Dark</SelectItem>
+                    <SelectItem value="system">System</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Choose your preferred color theme
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="primaryColor">Primary Color</Label>
+                <Select
+                  value={designSettings.primaryColor}
+                  onValueChange={(value) =>
+                    handleDesignChange("primaryColor", value)
+                  }
+                >
+                  <SelectTrigger id="primaryColor">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="violet">Violet</SelectItem>
+                    <SelectItem value="blue">Blue</SelectItem>
+                    <SelectItem value="green">Green</SelectItem>
+                    <SelectItem value="red">Red</SelectItem>
+                    <SelectItem value="orange">Orange</SelectItem>
+                    <SelectItem value="purple">Purple</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Choose your primary brand color
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="accentColor">Accent Color</Label>
+                <Select
+                  value={designSettings.accentColor}
+                  onValueChange={(value) =>
+                    handleDesignChange("accentColor", value)
+                  }
+                >
+                  <SelectTrigger id="accentColor">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="fuchsia">Fuchsia</SelectItem>
+                    <SelectItem value="cyan">Cyan</SelectItem>
+                    <SelectItem value="pink">Pink</SelectItem>
+                    <SelectItem value="yellow">Yellow</SelectItem>
+                    <SelectItem value="indigo">Indigo</SelectItem>
+                    <SelectItem value="teal">Teal</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Choose your accent color
                 </p>
               </div>
             </CardContent>
           </Card>
 
+          {/* Data Export */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Download className="h-5 w-5" />
+                Data Export
+              </CardTitle>
+              <CardDescription>
+                Download a copy of your account data
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" onClick={handleExportData}>
+                <Download className="h-4 w-4 mr-2" />
+                Export My Data
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2">
+                Download all your account data in JSON format
+              </p>
+            </CardContent>
+          </Card>
+
           <Separator />
 
-          {/* Danger Zone */}
-          <Card className="border-destructive">
+          {/* Sign Out */}
+          <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-destructive">
+              <CardTitle className="flex items-center gap-2">
                 <LogOut className="h-5 w-5" />
                 Sign Out
               </CardTitle>
@@ -361,13 +956,72 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent>
               <Button
-                variant="destructive"
+                variant="outline"
                 onClick={handleLogout}
                 className="w-full md:w-auto"
               >
                 <LogOut className="h-4 w-4 mr-2" />
                 Sign Out
               </Button>
+            </CardContent>
+          </Card>
+
+          {/* Danger Zone */}
+          <Card className="border-destructive">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-destructive">
+                <Trash2 className="h-5 w-5" />
+                Danger Zone
+              </CardTitle>
+              <CardDescription>
+                Permanently delete your account and all associated data
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Alert variant="destructive">
+                <AlertCircle className="h-4 w-4" />
+                <AlertDescription>
+                  This action cannot be undone. This will permanently delete
+                  your account and remove all your data from our servers.
+                </AlertDescription>
+              </Alert>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button variant="destructive" className="w-full md:w-auto">
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete Account
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This action cannot be undone. This will permanently delete
+                      your account and remove all your data from our servers.
+                      <br />
+                      <br />
+                      Type <strong>DELETE</strong> to confirm:
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <div className="py-4">
+                    <Input
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder="Type DELETE to confirm"
+                    />
+                  </div>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={handleDeleteAccount}
+                      disabled={deleteConfirmText !== "DELETE" || isDeleting}
+                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    >
+                      {isDeleting ? "Deleting..." : "Delete Account"}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </CardContent>
           </Card>
         </div>

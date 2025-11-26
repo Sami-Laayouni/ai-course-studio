@@ -50,11 +50,6 @@ export function Sidebar({ userRole }: SidebarProps) {
             label: "Database Status",
             icon: Database,
           },
-          {
-            href: "/dashboard/ai-generator",
-            label: "AI Generator",
-            icon: Brain,
-          },
           { href: "/admin/users", label: "User Management", icon: Users },
           {
             href: "/admin/courses",
@@ -68,24 +63,9 @@ export function Sidebar({ userRole }: SidebarProps) {
         return [
           { href: "/dashboard", label: "Dashboard", icon: Home },
           { href: "/dashboard/courses", label: "My Courses", icon: BookOpen },
-          {
-            href: "/dashboard/ai-generator",
-            label: "AI Generator",
-            icon: Brain,
-          },
-          {
-            href: "/dashboard/courses/new",
-            label: "Create Course",
-            icon: PlusCircle,
-          },
-          { href: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
         ];
       case "student":
-        return [
-          { href: "/learn", label: "My Learning", icon: GraduationCap },
-          { href: "/learn/courses", label: "Browse Courses", icon: BookOpen },
-          { href: "/learn/progress", label: "My Progress", icon: BarChart3 },
-        ];
+        return [{ href: "/learn", label: "My Learning", icon: GraduationCap }];
       default:
         return [];
     }

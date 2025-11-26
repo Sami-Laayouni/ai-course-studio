@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
 import { createClient } from "@/lib/supabase/server";
+import { ai, getModelName, getDefaultConfig, requireAIConfiguration } from "@/lib/ai-config";
 
 export async function POST(request: NextRequest) {
   try {
@@ -49,12 +48,31 @@ export async function POST(request: NextRequest) {
       customPrompt
     );
 
-    // Generate content using Google AI
-    const { text } = await generateText({
-      model: google("gemini-1.5-flash"),
-      prompt,
-      temperature: 0.7,
+    // Generate content using Gemini AI
+    requireAIConfiguration();
+
+    const config = {
+      ...getDefaultConfig(),
+      maxOutputTokens: 2000,
+    };
+
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
+      config,
+      contents: [
+        {
+          role: "user",
+          text: prompt,
+        },
+      ],
     });
+
+    let text = "";
+    for await (const chunk of response) {
+      if (chunk.text) {
+        text += chunk.text;
+      }
+    }
 
     // Parse the generated content
     let parsedContent;
@@ -80,7 +98,7 @@ export async function POST(request: NextRequest) {
       prompt: prompt,
       generated_content: generatedContent,
       content_type: contentType,
-      model_used: "gemini-1.5-flash",
+      model_used: getModelName(),
     });
 
     return NextResponse.json({ content: generatedContent });

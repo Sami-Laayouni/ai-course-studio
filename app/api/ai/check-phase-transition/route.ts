@@ -1,31 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import OpenAI from "openai";
+import {
+  ai,
+  getModelName,
+  getDefaultConfig,
+  isAIConfigured,
+} from "@/lib/ai-config";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
     const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    // Authentication is optional; proceed in anonymous mode when not logged in
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    const { 
-      activityId, 
-      nodeId, 
-      studentResponse, 
+    const {
+      activityId,
+      nodeId,
+      studentResponse,
       contextSources = [],
       performanceHistory = [],
-      threshold = 70 
+      threshold = 70,
     } = await request.json();
 
     if (!activityId || !nodeId || !studentResponse) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        { status: 400 }
+      );
     }
 
     // Get node configuration
@@ -36,14 +41,21 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (!activity) {
-      return NextResponse.json({ error: "Activity not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Activity not found" },
+        { status: 404 }
+      );
     }
 
     const nodes = activity.content?.nodes || [];
+    const connections = activity.content?.connections || [];
     const node = nodes.find((n: any) => n.id === nodeId);
 
     if (!node || node.type !== "condition") {
-      return NextResponse.json({ error: "Condition node not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Condition node not found" },
+        { status: 404 }
+      );
     }
 
     const config = node.config || {};
@@ -55,11 +67,20 @@ export async function POST(request: NextRequest) {
     let confidence = 0.5;
     let reasoning = "";
 
-    if (conditionType === "performance" && useAIClassification) {
+    if (
+      conditionType === "performance" &&
+      useAIClassification &&
+      isAIConfigured()
+    ) {
       // Use AI to classify performance
       const contextText = contextSources
-        .map((source: any) => `${source.title}: ${source.summary || source.key_points?.join(', ') || ''}`)
-        .join('\n\n');
+        .map(
+          (source: any) =>
+            `${source.title}: ${
+              source.summary || source.key_points?.join(", ") || ""
+            }`
+        )
+        .join("\n\n");
 
       const prompt = `Analyze the student's performance and determine if they should take the mastery path or novel path.
 
@@ -69,7 +90,9 @@ Context Sources:
 ${contextText}
 
 Performance History:
-${performanceHistory.map((p: any) => `- ${p.type}: ${p.score || p.performance}%`).join('\n')}
+${performanceHistory
+  .map((p: any) => `- ${p.type}: ${p.score || p.performance}%`)
+  .join("\n")}
 
 Threshold for Mastery: ${performanceThreshold}%
 
@@ -89,25 +112,43 @@ Respond with JSON:
 }`;
 
       try {
-        const completion = await openai.chat.completions.create({
-          model: "gpt-4",
-          messages: [
+        if (!isAIConfigured()) {
+          throw new Error(
+            "AI not configured. Please set GOOGLE_PROJECT_ID, GOOGLE_CLIENT_EMAIL, and GOOGLE_PRIVATE_KEY in your .env.local file"
+          );
+        }
+
+        const config = {
+          ...getDefaultConfig(),
+          responseMimeType: "application/json" as const,
+          maxOutputTokens: 500,
+          systemInstruction: [
             {
-              role: "system",
-              content: "You are an expert educational AI that evaluates student performance to determine appropriate learning paths. Be fair and encouraging while maintaining academic standards."
+              text: "You are an expert educational AI that evaluates student performance to determine appropriate learning paths. Be fair and encouraging while maintaining academic standards.",
             },
+          ],
+        };
+
+        const response = await ai.models.generateContentStream({
+          model: getModelName(),
+          config,
+          contents: [
             {
               role: "user",
-              content: prompt
-            }
+              text: prompt,
+            },
           ],
-          max_tokens: 500,
-          temperature: 0.3,
         });
 
-        const response = completion.choices[0]?.message?.content;
-        if (response) {
-          const parsed = JSON.parse(response);
+        let text = "";
+        for await (const chunk of response) {
+          if (chunk.text) {
+            text += chunk.text;
+          }
+        }
+
+        if (text) {
+          const parsed = JSON.parse(text);
           shouldTakeMasteryPath = parsed.shouldTakeMasteryPath || false;
           confidence = parsed.confidence || 0.5;
           reasoning = parsed.reasoning || "";
@@ -115,80 +156,104 @@ Respond with JSON:
       } catch (aiError) {
         console.error("AI classification error:", aiError);
         // Fallback to simple scoring
-        shouldTakeMasteryPath = calculateSimpleScore(studentResponse, performanceThreshold);
+        shouldTakeMasteryPath = calculateSimpleScore(
+          studentResponse,
+          performanceThreshold
+        );
         reasoning = "Used fallback scoring method";
       }
     } else {
       // Use simple scoring or other methods
-      shouldTakeMasteryPath = calculateSimpleScore(studentResponse, performanceThreshold);
+      shouldTakeMasteryPath = calculateSimpleScore(
+        studentResponse,
+        performanceThreshold
+      );
       reasoning = "Used simple scoring method";
     }
 
     // Save the decision to database
-    const { error: saveError } = await supabase
-      .from("student_performance")
-      .insert({
-        id: `perf_${Date.now()}`,
-        user_id: user.id,
-        activity_id: activityId,
-        node_id: nodeId,
-        response: studentResponse,
-        should_take_mastery_path: shouldTakeMasteryPath,
-        confidence,
-        reasoning,
-        threshold_used: performanceThreshold,
-        created_at: new Date().toISOString(),
-      });
-
-    if (saveError) {
-      console.error("Error saving performance data:", saveError);
+    if (user) {
+      const { error: saveError } = await supabase
+        .from("student_performance")
+        .insert({
+          id: `perf_${Date.now()}`,
+          user_id: user.id,
+          activity_id: activityId,
+          node_id: nodeId,
+          response: studentResponse,
+          should_take_mastery_path: shouldTakeMasteryPath,
+          confidence,
+          reasoning,
+          threshold_used: performanceThreshold,
+          created_at: new Date().toISOString(),
+        });
+      if (saveError) {
+        console.error("Error saving performance data:", saveError);
+      }
     }
 
+    const nextNodeId = findNextNodeId(
+      connections,
+      nodeId,
+      shouldTakeMasteryPath ? "mastery" : "novel"
+    );
     return NextResponse.json({
       shouldTakeMasteryPath,
       confidence,
       reasoning,
-      pathLabel: shouldTakeMasteryPath 
-        ? (config.mastery_path || "Mastery Path")
-        : (config.novel_path || "Novel Path"),
-      nextNodeId: shouldTakeMasteryPath 
-        ? findNextNodeId(nodes, nodeId, "mastery")
-        : findNextNodeId(nodes, nodeId, "novel"),
+      pathLabel: shouldTakeMasteryPath
+        ? config.mastery_path || "Mastery Path"
+        : config.novel_path || "Novel Path",
+      nextNodeId,
     });
-
   } catch (error) {
     console.error("Phase transition check error:", error);
-    return NextResponse.json({ 
-      error: "Failed to check phase transition",
-      shouldTakeMasteryPath: false,
-      confidence: 0.5,
-      reasoning: "Error occurred during analysis"
-    }, { status: 500 });
+    return NextResponse.json(
+      {
+        error: "Failed to check phase transition",
+        shouldTakeMasteryPath: false,
+        confidence: 0.5,
+        reasoning: "Error occurred during analysis",
+      },
+      { status: 500 }
+    );
   }
 }
 
 function calculateSimpleScore(response: string, threshold: number): boolean {
   // Simple heuristics for scoring
-  const wordCount = response.split(' ').length;
-  const hasQuestions = response.includes('?');
-  const hasAnalysis = response.includes('because') || response.includes('therefore') || response.includes('however');
+  const wordCount = response.split(" ").length;
+  const hasQuestions = response.includes("?");
+  const hasAnalysis =
+    response.includes("because") ||
+    response.includes("therefore") ||
+    response.includes("however");
   const hasContext = response.length > 100;
-  
+
   let score = 0;
   if (wordCount > 50) score += 20;
   if (hasQuestions) score += 15;
   if (hasAnalysis) score += 25;
   if (hasContext) score += 20;
   if (response.length > 200) score += 20;
-  
+
   return score >= threshold;
 }
 
-function findNextNodeId(nodes: any[], currentNodeId: string, pathType: string): string | null {
-  // Find connections from current node
-  const connections = nodes.find(n => n.id === currentNodeId)?.connections || [];
-  
-  // For now, return the first connection
-  // In a more complex system, you'd have labeled connections
-  return connections[0] || null;
+function findNextNodeId(
+  connections: Array<{ from: string; to: string; label?: string }>,
+  currentNodeId: string,
+  pathType: "mastery" | "novel" | string
+): string | null {
+  if (!Array.isArray(connections)) return null;
+  // Prefer labeled connections matching the path type
+  const labeled = connections.find(
+    (c) =>
+      c.from === currentNodeId &&
+      (c.label || "").toLowerCase() === pathType.toLowerCase()
+  );
+  if (labeled) return labeled.to || null;
+  // Fallback: first outgoing connection
+  const first = connections.find((c) => c.from === currentNodeId);
+  return first ? first.to : null;
 }

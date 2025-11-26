@@ -1,7 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@/lib/supabase/server";
-import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
+import genAI from "@/lib/genai";
 
 export async function POST(request: NextRequest) {
   try {
@@ -68,12 +67,31 @@ Create unique, engaging, and personalized instructions that:
 
 The instructions should be 2-3 paragraphs long and feel personal and encouraging.`;
 
-    // Generate AI response
-    const { text } = await generateText({
-      model: google("gemini-1.5-flash"),
-      prompt: context,
-      maxTokens: 400,
+    // Generate AI response using Gemini AI
+    requireAIConfiguration();
+
+    const config = {
+      ...getDefaultConfig(),
+      maxOutputTokens: 400,
+    };
+
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
+      config,
+      contents: [
+        {
+          role: "user",
+          text: context,
+        },
+      ],
     });
+
+    let text = "";
+    for await (const chunk of response) {
+      if (chunk.text) {
+        text += chunk.text;
+      }
+    }
 
     return NextResponse.json({ instructions: text });
   } catch (error) {

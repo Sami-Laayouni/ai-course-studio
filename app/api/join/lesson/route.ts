@@ -16,7 +16,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Get lesson by join code
+    // Normalize join code: trim whitespace and convert to uppercase
+    const normalizedJoinCode = join_code?.trim().toUpperCase();
+    
+    if (!normalizedJoinCode) {
+      return NextResponse.json({ error: "Join code is required" }, { status: 400 });
+    }
+
+    // Get lesson by join code (normalized to uppercase for consistent matching)
     const { data: lesson, error: lessonError } = await supabase
       .from("lessons")
       .select(
@@ -29,7 +36,7 @@ export async function POST(request: NextRequest) {
         )
       `
       )
-      .eq("join_code", join_code)
+      .eq("join_code", normalizedJoinCode)
       .single();
 
     if (lessonError || !lesson) {

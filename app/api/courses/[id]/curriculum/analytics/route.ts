@@ -1,0 +1,395 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { ai, getModelName, getDefaultConfig } from "@/lib/ai-config";
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic'; // This route uses cookies/auth, must be dynamic
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id: courseId } = await params;
+    const { curriculum_id } = await request.json();
+
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Get curriculum document
+    const { data: curriculum, error: curriculumError } = await supabase
+      .from("curriculum_documents")
+      .select("*")
+      .eq("id", curriculum_id)
+      .eq("course_id", courseId)
+      .single();
+
+    if (curriculumError || !curriculum) {
+      return NextResponse.json({ error: "Curriculum not found" }, { status: 404 });
+    }
+
+    // Check if processing is still in progress
+    if (curriculum.processing_status && 
+        curriculum.processing_status !== "completed" && 
+        curriculum.processing_status !== "failed") {
+      return NextResponse.json({
+        success: false,
+        message: "Curriculum is still being processed. Please wait for processing to complete.",
+        processing_status: curriculum.processing_status,
+        processing_progress: curriculum.processing_progress,
+      });
+    }
+
+    // Get all activities for this course
+    const { data: activities, error: activitiesError } = await supabase
+      .from("activities")
+      .select("id, title, description, content")
+      .eq("course_id", courseId);
+
+    if (activitiesError) {
+      return NextResponse.json({ error: "Failed to fetch activities" }, { status: 500 });
+    }
+
+    const activityCount = activities?.length || 0;
+
+    // Get all student progress for these activities (need full data for analytics)
+    const activityIds = activities?.map((a) => a.id) || [];
+    const { data: progressData, error: progressError } = await supabase
+      .from("student_progress")
+      .select("*")
+      .in("activity_id", activityIds);
+
+    if (progressError) {
+      console.error("Error fetching progress:", progressError);
+    }
+
+    // Calculate total student plays (sum of all attempts)
+    const totalStudentPlays = progressData?.reduce((sum, p) => sum + (p.attempts || 0), 0) || 0;
+
+    // Check minimum data requirements: at least 3 activities and 25 student plays
+    const MIN_ACTIVITIES = 3;
+    const MIN_STUDENT_PLAYS = 25;
+
+    if (activityCount < MIN_ACTIVITIES || totalStudentPlays < MIN_STUDENT_PLAYS) {
+      return NextResponse.json({
+        success: false,
+        insufficient_data: true,
+        message: "Not enough data yet",
+        requirements: {
+          min_activities: MIN_ACTIVITIES,
+          min_student_plays: MIN_STUDENT_PLAYS,
+          current_activities: activityCount,
+          current_student_plays: totalStudentPlays,
+        },
+      });
+    }
+
+    // Get enrollments to count total students
+    const { data: enrollments } = await supabase
+      .from("enrollments")
+      .select("student_id")
+      .eq("course_id", courseId);
+
+    const totalStudents = enrollments?.length || 0;
+
+    // Map activities to curriculum sections (using AI if mappings don't exist)
+    const sections = curriculum.sections || [];
+    const analytics: any[] = [];
+
+    for (const section of sections) {
+      const sectionId = section.id || section.title;
+
+      // Find activities mapped to this section
+      const { data: mappings } = await supabase
+        .from("activity_curriculum_mappings")
+        .select("activity_id")
+        .eq("curriculum_document_id", curriculum_id)
+        .eq("section_id", sectionId);
+
+      const mappedActivityIds = mappings?.map((m) => m.activity_id) || [];
+
+      // If no mappings exist, try to auto-map using vector similarity
+      // Also refresh mappings periodically to catch new activities
+      if (mappedActivityIds.length === 0 && activities && activities.length > 0) {
+        try {
+          // First, ensure section embedding exists
+          const { data: sectionEmbedding } = await supabase
+            .from("curriculum_section_embeddings")
+            .select("embedding")
+            .eq("curriculum_document_id", curriculum_id)
+            .eq("section_id", sectionId)
+            .single();
+
+          if (!sectionEmbedding || !sectionEmbedding.embedding) {
+            // Section embedding not found - trigger embedding generation
+            console.log(`Section embedding not found for section ${sectionId}, triggering generation...`);
+            await fetch(`${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/curriculum/generate-embeddings`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ curriculum_document_id: curriculum_id }),
+            }).catch(err => console.error("Error triggering embedding generation:", err));
+          }
+
+          // Get all activity embeddings for this course
+          const activityIds = activities.map(a => a.id);
+          const { data: activityEmbeddings } = await supabase
+            .from("activity_embeddings")
+            .select("activity_id, embedding")
+            .in("activity_id", activityIds);
+
+          // Generate embeddings for activities that don't have them
+          if (!activityEmbeddings || activityEmbeddings.length < activities.length) {
+            const missingActivityIds = activities
+              .filter(a => !activityEmbeddings?.some(ae => ae.activity_id === a.id))
+              .map(a => a.id);
+            
+            for (const activityId of missingActivityIds) {
+              try {
+                await fetch(`${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/api/activities/generate-embedding`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ activity_id: activityId }),
+                });
+              } catch (err) {
+                console.error(`Error generating embedding for activity ${activityId}:`, err);
+              }
+            }
+          }
+
+          // Use the database function to find and create mappings for all activities
+          // This will automatically match activities to relevant sections
+          if (activityEmbeddings && activityEmbeddings.length > 0) {
+            for (const activityEmbedding of activityEmbeddings) {
+              if (!activityEmbedding.embedding) continue;
+
+              try {
+                // Use the database function to find and create mappings
+                // Lower threshold to 0.65 to catch more relevant matches
+                const { data: mappings, error: mappingError } = await supabase.rpc(
+                  'update_activity_curriculum_mappings',
+                  {
+                    p_activity_id: activityEmbedding.activity_id,
+                    p_curriculum_document_id: curriculum_id,
+                    p_similarity_threshold: 0.65 // Lower threshold for better matching
+                  }
+                );
+
+                if (mappingError) {
+                  console.error(`Error mapping activity ${activityEmbedding.activity_id}:`, mappingError);
+                  continue;
+                }
+
+                if (mappings && mappings.length > 0) {
+                  const matchingMappings = mappings.filter((m: any) => m.section_id === sectionId);
+                  if (matchingMappings.length > 0) {
+                    mappedActivityIds.push(activityEmbedding.activity_id);
+                  }
+                }
+              } catch (err) {
+                console.error(`Error mapping activity ${activityEmbedding.activity_id}:`, err);
+              }
+            }
+          }
+        } catch (error) {
+          console.error("Error auto-mapping activities with vector similarity:", error);
+        }
+      } else if (mappedActivityIds.length > 0) {
+        // Refresh mappings to ensure they're up to date
+        // This helps catch new activities that were added after initial mapping
+        try {
+          const activityIds = activities?.map(a => a.id) || [];
+          for (const activityId of activityIds) {
+            try {
+              await supabase.rpc('update_activity_curriculum_mappings', {
+                p_activity_id: activityId,
+                p_curriculum_document_id: curriculum_id,
+                p_similarity_threshold: 0.65
+              });
+            } catch (err) {
+              // Ignore errors for individual activities
+            }
+          }
+          
+          // Re-fetch mappings after refresh
+          const { data: refreshedMappings } = await supabase
+            .from("activity_curriculum_mappings")
+            .select("activity_id")
+            .eq("curriculum_document_id", curriculum_id)
+            .eq("section_id", sectionId);
+          
+          if (refreshedMappings) {
+            mappedActivityIds.length = 0;
+            mappedActivityIds.push(...refreshedMappings.map(m => m.activity_id));
+          }
+        } catch (error) {
+          console.error("Error refreshing mappings:", error);
+        }
+      }
+
+      // Calculate statistics for this section
+      const sectionProgress = progressData?.filter((p) =>
+        mappedActivityIds.includes(p.activity_id)
+      ) || [];
+
+      const studentsAttempted = new Set(
+        sectionProgress.map((p) => p.student_id)
+      ).size;
+      const studentsCompleted = sectionProgress.filter(
+        (p) => p.status === "completed"
+      ).length;
+      const completedProgress = sectionProgress.filter(
+        (p) => p.status === "completed" && p.score !== null
+      );
+      const averageScore =
+        completedProgress.length > 0
+          ? completedProgress.reduce((sum, p) => sum + (p.score || 0), 0) /
+            completedProgress.length
+          : 0;
+
+      // Calculate average time spent
+      const timeSpentData = sectionProgress
+        .filter((p) => p.time_spent)
+        .map((p) => p.time_spent || 0);
+      const averageTimeSpent =
+        timeSpentData.length > 0
+          ? timeSpentData.reduce((sum, t) => sum + t, 0) / timeSpentData.length
+          : 0;
+
+      // Identify common misconceptions using AI
+      let misconceptions: any[] = [];
+      let performanceInsights: any = {};
+
+      if (sectionProgress.length > 0) {
+        try {
+          const misconceptionPrompt = `Analyze student performance data for this curriculum section and identify:
+1. Common misconceptions students have
+2. Concepts students understand well
+3. Concepts students struggle with
+4. Suggestions for improvement
+
+Section: ${section.title}
+Concepts: ${(section.concepts || []).join(", ")}
+Total Students: ${totalStudents}
+Students Attempted: ${studentsAttempted}
+Students Completed: ${studentsCompleted}
+Average Score: ${averageScore.toFixed(1)}%
+
+Student Responses/Feedback (sample):
+${sectionProgress
+  .slice(0, 10)
+  .map((p) => JSON.stringify(p.responses || {}))
+  .join("\n")}
+
+Return a JSON object with:
+{
+  "common_misconceptions": [{"concept": "...", "description": "...", "frequency": 0-100}],
+  "strong_concepts": ["concept1", "concept2"],
+  "weak_concepts": ["concept1", "concept2"],
+  "suggestions": ["suggestion1", "suggestion2"]
+}`;
+
+          const config = {
+            ...getDefaultConfig(),
+            responseMimeType: "application/json" as const,
+          };
+
+          const response = await ai.models.generateContent({
+            model: getModelName(),
+            config,
+            contents: [
+              {
+                role: "user",
+                text: misconceptionPrompt,
+              },
+            ],
+          });
+
+          let responseText = "";
+          if (typeof (response as any).outputText === "function") {
+            responseText = (response as any).outputText();
+          } else if ((response as any).outputText) {
+            responseText = (response as any).outputText;
+          }
+
+          const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const insights = JSON.parse(jsonMatch[0]);
+            misconceptions = insights.common_misconceptions || [];
+            performanceInsights = {
+              strong_concepts: insights.strong_concepts || [],
+              weak_concepts: insights.weak_concepts || [],
+              suggestions: insights.suggestions || [],
+            };
+          }
+        } catch (error) {
+          console.error("Error generating insights:", error);
+        }
+      }
+
+      // Calculate concept mastery
+      const conceptMastery: any = {};
+      if (section.concepts && Array.isArray(section.concepts)) {
+        for (const concept of section.concepts) {
+          const conceptProgress = sectionProgress.filter((p) => {
+            const responses = p.responses || {};
+            return JSON.stringify(responses).toLowerCase().includes(concept.toLowerCase());
+          });
+          const conceptCompleted = conceptProgress.filter(
+            (p) => p.status === "completed"
+          );
+          conceptMastery[concept] =
+            conceptProgress.length > 0
+              ? (conceptCompleted.length / conceptProgress.length) * 100
+              : 0;
+        }
+      }
+
+      // Save or update analytics
+      const analyticsData = {
+        curriculum_document_id: curriculum_id,
+        section_id: sectionId,
+        course_id: courseId,
+        total_students: totalStudents,
+        students_attempted: studentsAttempted,
+        students_completed: studentsCompleted,
+        average_score: averageScore,
+        average_time_spent: Math.round(averageTimeSpent),
+        common_misconceptions: misconceptions,
+        performance_insights: performanceInsights,
+        concept_mastery: conceptMastery,
+        last_calculated_at: new Date().toISOString(),
+      };
+
+      const { error: upsertError } = await supabase
+        .from("curriculum_analytics")
+        .upsert(analyticsData, {
+          onConflict: "curriculum_document_id,section_id",
+        });
+
+      if (upsertError) {
+        console.error("Error saving analytics:", upsertError);
+      }
+
+      analytics.push({
+        ...analyticsData,
+        section_title: section.title,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      analytics,
+    });
+  } catch (error) {
+    console.error("Error calculating analytics:", error);
+    return NextResponse.json(
+      { error: "Failed to calculate analytics" },
+      { status: 500 }
+    );
+  }
+}
+

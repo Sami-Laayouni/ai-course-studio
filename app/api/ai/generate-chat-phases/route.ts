@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { generateText } from "ai";
-import { google } from "@ai-sdk/google";
+import { ai, getModelName, getDefaultConfig, requireAIConfiguration } from "@/lib/ai-config";
 
 export async function POST(request: NextRequest) {
   try {
@@ -105,10 +104,30 @@ Return the response as valid JSON with this structure:
 Make the instructions specific, engaging, and appropriate for the grade level. The AI tutor should be encouraging, patient, and adaptive to student needs.
 `;
 
-    const { text } = await generateText({
-      model: google("gemini-1.5-flash"),
-      prompt,
+    requireAIConfiguration();
+
+    const config = {
+      ...getDefaultConfig(),
+      maxOutputTokens: 2000,
+    };
+
+    const response = await ai.models.generateContentStream({
+      model: getModelName(),
+      config,
+      contents: [
+        {
+          role: "user",
+          text: prompt,
+        },
+      ],
     });
+
+    let text = "";
+    for await (const chunk of response) {
+      if (chunk.text) {
+        text += chunk.text;
+      }
+    }
 
     let phases;
     try {
@@ -165,7 +184,7 @@ Make the instructions specific, engaging, and appropriate for the grade level. T
       prompt,
       generated_content: phases,
       content_type: "chat_phases",
-      model_used: "openai/gpt-4o-mini",
+      model_used: getModelName(),
     });
 
     return NextResponse.json({ phases: phases.phases });

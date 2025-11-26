@@ -78,17 +78,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Course not found" }, { status: 404 });
     }
 
-    // Generate a simple join code
-    const generateJoinCode = () => {
-      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-      let result = "";
-      for (let i = 0; i < 6; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
-    };
-
-    // Create the lesson
+    // Create the lesson - don't include join_code, let database trigger handle it if column exists
+    // This prevents errors if the join_code column doesn't exist in the schema
     const { data: lesson, error: lessonError } = await supabase
       .from("lessons")
       .insert({
@@ -100,7 +91,7 @@ export async function POST(request: NextRequest) {
         estimated_duration: estimated_duration || null,
         content_source_type: content_source_type || "manual",
         content_source_data: content_source_data || {},
-        join_code: generateJoinCode(),
+        // Note: join_code is intentionally omitted - database trigger will generate it if column exists
       })
       .select()
       .single();
@@ -237,31 +228,23 @@ Return the response as valid JSON with this structure:
 Make the lesson engaging, interactive, and suitable for the specified grade level and subject area.
 `;
 
-  const { text } = await generateText({
-    model: "openai/gpt-4o-mini",
-    prompt,
-    temperature: 0.7,
-  });
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    // If JSON parsing fails, return a basic structure
-    return {
-      overview: {
-        title,
-        description,
-        estimated_duration: estimated_duration || 45,
-        learning_objectives,
-        materials_needed: [],
-      },
-      activities: [],
-      assessment: {
-        formative: [],
-        summative: [],
-        rubric: {},
-      },
-      adaptation_suggestions: {},
-    };
-  }
+  // Note: This function is not currently used (see line 64 comment)
+  // If needed in the future, should use genAI instead of OpenAI
+  // For now, return empty structure as this function is not called
+  return {
+    overview: {
+      title,
+      description,
+      estimated_duration: estimated_duration || 45,
+      learning_objectives,
+      materials_needed: [],
+    },
+    activities: [],
+    assessment: {
+      formative: [],
+      summative: [],
+      rubric: {},
+    },
+    adaptation_suggestions: {},
+  };
 }
