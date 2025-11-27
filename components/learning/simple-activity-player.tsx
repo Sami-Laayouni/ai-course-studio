@@ -62,8 +62,33 @@ export default function SimpleActivityPlayer({
     "mastery" | "novel" | null
   >(null);
 
-  const steps = activity.content?.nodes || [];
+  const rawSteps = activity.content?.nodes || [];
   const connections = activity.content?.connections || [];
+
+  // Order steps based on connections, starting from the start node
+  const steps = React.useMemo(() => {
+    if (!rawSteps.length) return [];
+    const startNode =
+      rawSteps.find((s: any) => s.type === "start") || rawSteps[0];
+    const ordered: any[] = [];
+    const visited = new Set<string>();
+    let current = startNode;
+
+    while (current && !visited.has(current.id)) {
+      ordered.push(current);
+      visited.add(current.id);
+      const nextConn = connections.find((c: any) => c.from === current.id);
+      if (!nextConn) break;
+      current = rawSteps.find((s: any) => s.id === nextConn.to);
+    }
+
+    // Append any nodes not reached to avoid losing them in preview
+    rawSteps.forEach((node: any) => {
+      if (!visited.has(node.id)) ordered.push(node);
+    });
+
+    return ordered;
+  }, [rawSteps, connections]);
 
   const getStepIcon = (step: any) => {
     switch (step.type) {
@@ -91,23 +116,25 @@ export default function SimpleActivityPlayer({
     if (!questions.length) return 0;
 
     let correctCount = 0;
+    const norm = (val: any) =>
+      val === undefined || val === null
+        ? ""
+        : String(val).toLowerCase().trim();
+
     questions.forEach((question: any) => {
       const userAnswer = answers[question.id];
+      const correctAnswer = question.correct_answer;
       if (question.type === "multiple_choice") {
-        if (userAnswer === question.correct_answer) {
+        if (norm(userAnswer) === norm(correctAnswer)) {
           correctCount++;
         }
       } else if (question.type === "true_false") {
-        if (userAnswer === question.correct_answer) {
+        if (norm(userAnswer) === norm(correctAnswer)) {
           correctCount++;
         }
       } else if (question.type === "fill_blank" || question.type === "short_answer") {
         // For text answers, do a simple lowercase comparison
-        if (
-          userAnswer &&
-          userAnswer.toLowerCase().trim() ===
-            question.correct_answer.toLowerCase().trim()
-        ) {
+        if (norm(userAnswer) === norm(correctAnswer)) {
           correctCount++;
         }
       }
@@ -133,13 +160,23 @@ export default function SimpleActivityPlayer({
   };
 
   const handleStepComplete = (stepIndex: number, data?: any) => {
+    const step = steps[stepIndex];
+
+    // Capture video auto-questions for downstream AI chat
+    if (step.type === "video" && step.config?.auto_questions?.length) {
+      data = {
+        ...(data || {}),
+        autoQuestions: step.config.auto_questions,
+        keyConcepts: step.config?.key_concepts || [],
+      };
+    }
+
     setCompletedSteps((prev) => new Set([...prev, stepIndex]));
     if (data) {
       setUserProgress((prev) => ({ ...prev, [stepIndex]: data }));
     }
 
     // Check for AI branching
-    const step = steps[stepIndex];
     if (step.type === "ai_chat" && step.config?.enable_branching) {
       // Simulate AI performance analysis
       const performance = Math.random() > 0.5 ? "mastery" : "novel";
@@ -158,6 +195,36 @@ export default function SimpleActivityPlayer({
 
   const getNextStep = (currentIndex: number) => {
     const step = steps[currentIndex];
+
+    // Handle quiz branching based on score
+    if (step.type === "quiz") {
+      const score =
+        userProgress[currentIndex]?.score ??
+        quizScores[step.id] ??
+        undefined;
+
+      const quizConnections = connections.filter(
+        (conn) => conn.from === step.id
+      );
+
+      if (quizConnections.length) {
+        const targetLabel =
+          typeof score === "number"
+            ? score >= 80
+              ? "high_score"
+              : score >= 60
+              ? "medium_score"
+              : "low_score"
+            : null;
+
+        const matched =
+          quizConnections.find((conn) => conn.label === targetLabel) ||
+          quizConnections[0];
+
+        const nextStepIndex = steps.findIndex((s) => s.id === matched.to);
+        if (nextStepIndex >= 0) return nextStepIndex;
+      }
+    }
 
     // Handle AI branching
     if (
@@ -285,6 +352,27 @@ export default function SimpleActivityPlayer({
                 </div>
               )}
 
+              {/* Surface any generated questions from earlier steps for context */}
+              {Object.values(userProgress).some(
+                (entry: any) => entry?.autoQuestions?.length
+              ) && (
+                <div className="p-4 bg-white border rounded-lg shadow-sm">
+                  <h5 className="font-semibold text-sm mb-2">
+                    Suggested Questions to Discuss
+                  </h5>
+                  <ul className="list-disc list-inside space-y-1 text-sm text-gray-700">
+                    {Object.values(userProgress)
+                      .flatMap((entry: any) => entry?.autoQuestions || [])
+                      .slice(0, 5)
+                      .map((q: any, idx: number) => (
+                        <li key={q?.id || idx}>
+                          {q?.question || q?.text || "Question"}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
+
               <Button
                 onClick={() => handleStepComplete(index, { aiPerformance })}
                 className="w-full"
@@ -383,9 +471,21 @@ export default function SimpleActivityPlayer({
                       <Star className="h-4 w-4" />
                       Total Score: {totalScore}%
                     </Badge>
-                  </div>
+              </div>
+              {step.config?.auto_questions?.length ? (
+                <div className="mt-3 p-3 bg-red-50 rounded-lg border border-red-100">
+                  <h5 className="text-sm font-semibold text-red-900 mb-1">
+                    Auto-Generated Questions
+                  </h5>
+                  <ul className="list-disc list-inside text-sm text-red-800 space-y-1">
+                    {step.config.auto_questions.slice(0, 5).map((q: any, i: number) => (
+                      <li key={q?.id || i}>{q?.question || q?.text || "Question"}</li>
+                    ))}
+                  </ul>
                 </div>
-              )}
+              ) : null}
+            </div>
+          )}
               <Button onClick={handleComplete} className="w-full">
                 Finish
               </Button>
@@ -508,13 +608,16 @@ function QuizContent({
 
       <div className="space-y-6">
         {questions.map((question: any, qIndex: number) => {
-          const userAnswer = quizAnswers[question.id];
-          const isCorrect =
-            isSubmitted &&
-            userAnswer &&
-            userAnswer.toString().toLowerCase().trim() ===
-              question.correct_answer?.toString().toLowerCase().trim();
-          const isIncorrect = isSubmitted && userAnswer && !isCorrect;
+      const userAnswer = quizAnswers[question.id];
+      const norm = (val: any) =>
+        val === undefined || val === null
+          ? ""
+          : val.toString().toLowerCase().trim();
+      const isCorrect =
+        isSubmitted &&
+        userAnswer &&
+        norm(userAnswer) === norm(question.correct_answer);
+      const isIncorrect = isSubmitted && userAnswer && !isCorrect;
 
           return (
             <Card
@@ -553,7 +656,7 @@ function QuizContent({
                             const isSelected = userAnswer === option;
                             const isCorrectOption =
                               isSubmitted &&
-                              option === question.correct_answer;
+                              norm(option) === norm(question.correct_answer);
 
                             return (
                               <div
@@ -608,7 +711,7 @@ function QuizContent({
                           const isSelected = userAnswer === option;
                           const isCorrectOption =
                             isSubmitted &&
-                            option === question.correct_answer;
+                            norm(option) === norm(question.correct_answer);
 
                           return (
                             <div

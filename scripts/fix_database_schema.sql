@@ -62,3 +62,12 @@ CREATE INDEX IF NOT EXISTS idx_courses_join_code ON courses(join_code);
 CREATE INDEX IF NOT EXISTS idx_lessons_join_code ON lessons(join_code);
 CREATE INDEX IF NOT EXISTS idx_course_enrollments_student ON course_enrollments(student_id);
 CREATE INDEX IF NOT EXISTS idx_course_enrollments_course ON course_enrollments(course_id);
+
+-- Additional fields to support new activity metadata
+ALTER TABLE public.activities ADD COLUMN IF NOT EXISTS branching_rules JSONB DEFAULT '[]';
+ALTER TABLE public.activities ADD COLUMN IF NOT EXISTS resources JSONB DEFAULT '[]';
+
+-- Ensure context_sources can store uploaded file metadata and generated questions
+ALTER TABLE public.context_sources ADD COLUMN IF NOT EXISTS file_path TEXT;
+ALTER TABLE public.context_sources ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
+ALTER TABLE public.context_sources ADD COLUMN IF NOT EXISTS questions JSONB;

@@ -1585,7 +1585,9 @@ export default function SimpleZapierBuilder({
         }
         // Check if all questions have text
         for (let i = 0; i < node.config.questions.length; i++) {
-          if (!node.config.questions[i].text?.trim()) {
+          const q = node.config.questions[i];
+          const questionText = q.text || q.question;
+          if (!questionText?.trim()) {
             alert(
               `Please fill in question ${i + 1} for the quiz node "${
                 node.title
@@ -1639,22 +1641,73 @@ export default function SimpleZapierBuilder({
       const finalActivityId = activityId || generateUUID();
       const isUpdate = !!activityId;
 
+      // Work on a mutable copy of nodes so we can enrich them before saving
+      const workingNodes = [...nodes];
+
+      // Ensure video nodes with auto-add enabled have generated questions before save
+      for (let i = 0; i < workingNodes.length; i++) {
+        const node = workingNodes[i];
+        if (
+          node.type === "video" &&
+          node.config?.auto_add_questions &&
+          (!node.config?.auto_questions ||
+            node.config.auto_questions.length === 0) &&
+          node.config?.youtube_url
+        ) {
+          try {
+            const response = await fetch("/api/ai/generate-video-questions", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ youtube_url: node.config.youtube_url }),
+            });
+
+            if (response.ok) {
+              const data = await response.json();
+              if (data?.questions?.length) {
+                workingNodes[i] = {
+                  ...node,
+                  config: {
+                    ...node.config,
+                    auto_questions: data.questions,
+                    question_timestamps: data.questions.map(
+                      (q: any) => q.timestamp
+                    ),
+                    key_concepts: data.key_concepts || [],
+                    has_auto_questions: true,
+                  },
+                };
+              }
+            }
+          } catch (err) {
+            console.error(
+              "Unable to generate questions for video node before save:",
+              err
+            );
+          }
+        }
+      }
+
+      // Update state with enriched nodes so UI stays in sync
+      setNodes(workingNodes);
+
       // Check for enhanced features
-      const hasAIChatNodes = nodes.some((n) => n.type === "ai_chat");
-      const hasAIBranching = nodes.some(
+      const hasAIChatNodes = workingNodes.some((n) => n.type === "ai_chat");
+      const hasAIBranching = workingNodes.some(
         (n) => n.type === "ai_chat" && n.config?.enable_branching
       );
-      const hasUploadNodes = nodes.some((n) => n.type === "pdf" && n.config?.upload_enabled);
-      const hasVideoNodes = nodes.some((n) => n.type === "video");
+      const hasUploadNodes = workingNodes.some(
+        (n) => n.type === "pdf" && n.config?.upload_enabled
+      );
+      const hasVideoNodes = workingNodes.some((n) => n.type === "video");
 
       // Calculate total points from nodes (sum of all node points)
-      const totalPoints = nodes.reduce((sum, node) => {
+      const totalPoints = workingNodes.reduce((sum, node) => {
         const nodePoints = node.config?.points;
         return sum + (nodePoints && nodePoints > 0 ? nodePoints : 0);
       }, 0);
 
       // Calculate total estimated duration from nodes (skip duration for video nodes)
-      const totalDuration = nodes.reduce((sum, node) => {
+      const totalDuration = workingNodes.reduce((sum, node) => {
         if (node.type === "video") {
           // Video duration is calculated from the video itself, not config
           return sum;
@@ -1664,6 +1717,27 @@ export default function SimpleZapierBuilder({
         return sum + (nodeDuration && nodeDuration > 0 ? nodeDuration : 0);
       }, 0);
 
+      // Build supplemental context from video questions for downstream AI chat
+      const videoQuestionSources =
+        workingNodes
+          .filter(
+            (node) => node.type === "video" && node.config?.auto_questions?.length
+          )
+          .map((node) => ({
+            id: `video_questions_${node.id}`,
+            type: "video_questions",
+            source_node_id: node.id,
+            title: node.title || "Video Questions",
+            youtube_url: node.config?.youtube_url,
+            questions: node.config?.auto_questions || [],
+            key_concepts: node.config?.key_concepts || [],
+          })) || [];
+
+      const activityContextSources = [
+        ...selectedContextSources,
+        ...videoQuestionSources,
+      ];
+
       const activity = {
         id: finalActivityId,
         type: "enhanced_workflow",
@@ -1672,7 +1746,7 @@ export default function SimpleZapierBuilder({
           workflowDescription ||
           "A custom learning activity created with the enhanced builder",
         content: {
-          nodes: nodes.map((node) => ({
+          nodes: workingNodes.map((node) => ({
             id: node.id,
             type: node.type,
             title: node.title,
@@ -1682,7 +1756,10 @@ export default function SimpleZapierBuilder({
               ...node.config,
               // Add context sources for AI chat nodes
               ...(node.type === "ai_chat" && {
-                context_sources: selectedContextSources,
+                context_sources: activityContextSources,
+                seeded_questions: videoQuestionSources.flatMap(
+                  (v) => v.questions || []
+                ),
               }),
               // Add AI branching configuration for AI chat nodes
               ...(node.type === "ai_chat" && {
@@ -1719,7 +1796,8 @@ export default function SimpleZapierBuilder({
           })),
           connections,
           workflow_type: "enhanced",
-          context_sources: selectedContextSources,
+          context_sources: activityContextSources,
+          video_question_sources: videoQuestionSources,
           // Enhanced features metadata
           features: {
             ai_branching: hasAIBranching,
@@ -1728,7 +1806,7 @@ export default function SimpleZapierBuilder({
             video_content: hasVideoNodes,
             performance_tracking: hasAIBranching || hasAIChatNodes,
             multiple_completion_paths:
-              nodes.filter((n) => n.type === "end").length > 1,
+              workingNodes.filter((n) => n.type === "end").length > 1,
           },
           // AI branching configuration
           ai_branching_config: hasAIBranching
@@ -2803,6 +2881,21 @@ export default function SimpleZapierBuilder({
                           const data = await response.json();
                           console.log("File uploaded:", data);
                           alert(`File "${file.name}" uploaded successfully!`);
+
+                          const uploadedFiles = selectedNode.config?.uploaded_files || [];
+                          const uploadedDoc = {
+                            id: data.document?.id || `${selectedNode.id}_${Date.now()}`,
+                            title: data.document?.title || file.name,
+                            url: data.document?.url,
+                            file_size: data.document?.fileSize || file.size,
+                            mime_type: data.document?.mimeType || file.type,
+                            key_points: data.document?.keyPoints || [],
+                            key_concepts: data.document?.keyConcepts || [],
+                          };
+
+                          updateNodeConfig(selectedNode.id, {
+                            uploaded_files: [...uploadedFiles, uploadedDoc],
+                          });
                         } else {
                           const error = await response.json();
                           alert(`Failed to upload "${file.name}": ${error.error}`);
