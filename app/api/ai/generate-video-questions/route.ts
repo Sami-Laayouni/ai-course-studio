@@ -153,6 +153,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     let transcriptItems: TranscriptItem[] = [];
     let transcript = "";
 
+    let usedFallbackTranscript = false;
+
     try {
       console.log(
         "🔄 Attempting to fetch transcript via youtube-transcript library..."
@@ -220,54 +222,32 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       console.error("❌ Error fetching transcript:", errorMessage);
       console.error("❌ Full error:", transcriptError);
 
-      // Check if it's a "no transcript available" error
-      if (
-        errorMessage.includes("Could not find") ||
-        errorMessage.includes("Transcript is disabled") ||
-        errorMessage.includes("No transcript") ||
-        errorMessage.includes("Transcript not available") ||
-        errorMessage.includes("Subtitles are disabled")
-      ) {
+      // Fallback: if no transcript, synthesize minimal context from metadata so users can still generate questions
+      transcript = `Video Title: ${videoMetadata.title}\nDescription unavailable.\nGenerate 5 comprehension questions about this topic.`;
+      usedFallbackTranscript = true;
+      console.warn(
+        "⚠️ Using fallback transcript composed from metadata because transcript fetch failed."
+      );
+    }
+
+    // Validate transcript length (allow short if using fallback)
+    if (!transcript || transcript.trim().length < 50) {
+      if (!usedFallbackTranscript) {
+        console.error(
+          `❌ Transcript too short: ${transcript?.length || 0} characters`
+        );
         return NextResponse.json(
           {
             success: false,
-            error:
-              "This video does not have captions/transcripts available. Please try a video with captions enabled.",
+            error: `Video transcript is too short (${
+              transcript?.length || 0
+            } characters). Please try a video with substantial captions.`,
             questions: [],
             key_concepts: [],
           },
           { status: 400 }
         );
       }
-
-      // For other errors, return generic error
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Failed to fetch transcript: ${errorMessage}. Please ensure the video has captions enabled.`,
-          questions: [],
-          key_concepts: [],
-        },
-        { status: 500 }
-      );
-    }
-
-    // Validate transcript length
-    if (!transcript || transcript.trim().length < 50) {
-      console.error(
-        `❌ Transcript too short: ${transcript?.length || 0} characters`
-      );
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Video transcript is too short (${
-            transcript?.length || 0
-          } characters). Please try a video with substantial captions.`,
-          questions: [],
-          key_concepts: [],
-        },
-        { status: 400 }
-      );
     }
 
     // Generate questions using AI
