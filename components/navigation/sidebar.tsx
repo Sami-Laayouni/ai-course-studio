@@ -28,6 +28,7 @@ import {
   X,
   LogOut,
   Database,
+  Store,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -63,6 +64,7 @@ export function Sidebar({ userRole }: SidebarProps) {
         return [
           { href: "/dashboard", label: "Dashboard", icon: Home },
           { href: "/dashboard/courses", label: "My Courses", icon: BookOpen },
+          { href: "/dashboard/marketplace", label: "Marketplace", icon: Store },
         ];
       case "student":
         return [{ href: "/learn", label: "My Learning", icon: GraduationCap }];
